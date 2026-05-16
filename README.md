@@ -163,6 +163,62 @@ uv run dccon2signal 170660 12345 99999
 - Signal 스티커 팩 최대 200 개 (디시콘은 보통 20~50 개라 문제 없음)
 - 스티커별 이모지 태그는 기본 `😀` placeholder. `--emoji-map` 또는 업로드 후 Signal Desktop 에서 편집
 
+## 텔레그램 봇 (선택 사항)
+
+`dccon2signal` 을 텔레그램으로 호출할 수 있는 봇이 같이 들어있어요. 큐가 직렬이라 봇 하나로 여러 사람이 써도 Signal rate limit 에 안 걸립니다.
+
+### 1. BotFather 에서 봇 생성
+
+폰 텔레그램에서 [@BotFather](https://t.me/BotFather) 와 채팅:
+- `/newbot` → 봇 이름 + username 입력
+- 받은 **HTTP API token** (e.g. `123456:ABC-...`) 을 저장
+
+### 2. 환경 변수 파일
+
+```bash
+cp deploy/dccon2signal-bot.env.example ~/.config/dccon2signal-bot.env
+chmod 600 ~/.config/dccon2signal-bot.env
+# 그리고 ~/.config/dccon2signal-bot.env 열어서 TELEGRAM_BOT_TOKEN 채우기
+```
+
+`DCCON2SIGNAL_AUTH` 는 `auth.json` 셋업이 이미 끝난 상태여야 동작합니다 (위 "자동 업로드 — Signal 인증 설정" 섹션 참조).
+
+### 3. systemd 유저 서비스로 실행
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/dccon2signal-bot.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now dccon2signal-bot
+systemctl --user status dccon2signal-bot
+journalctl --user -u dccon2signal-bot -f      # 실시간 로그
+```
+
+수동으로 한번 돌려보고 싶으면:
+```bash
+set -a; source ~/.config/dccon2signal-bot.env; set +a
+uv run dccon2signal-bot
+```
+
+### 4. 사용
+
+폰 텔레그램에서 봇을 찾아 다음 중 하나로 호출:
+
+| 어디서 | 어떻게 |
+|---|---|
+| DM | `170660` (숫자만 보내도 됨) |
+| DM | `/con2signal 170660` |
+| 그룹 | `@봇username 170660` |
+| 그룹 | `/con2signal 170660` |
+
+봇이 보낸 메시지가 단계별로 갱신되다가 마지막에 Signal 설치 링크로 바뀝니다.
+
+### 5. 트러블슈팅
+
+- 봇이 아무 응답 안함 → 토큰 확인 (`systemctl --user status dccon2signal-bot` 로 로그 보기)
+- `❌ 봇 측 인증 문제` → `auth.json` 만료. signal-cli 재링크 + auth.json 재생성
+- `Signal rate limit` → 한 번에 한 작업씩 직렬 처리되니 보통 안 걸리지만, 너무 자주 변환했으면 잠시 대기
+
 ## 개발
 
 ```bash

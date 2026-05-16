@@ -1,0 +1,14 @@
+[Unit]
+Description=DCcon to Signal sticker bot
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/signalsticker
+ExecStart=%h/projects/signalsticker/.venv/bin/python -m dccon2signal_bot
+Restart=on-failure
+RestartSec=10
+EnvironmentFile=%h/.config/dccon2signal-bot.env
+
+[Install]
+WantedBy=default.target
