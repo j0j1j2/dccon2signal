@@ -14,9 +14,7 @@ def build(pack: DcconPack, emoji_map: dict[str, str] | None = None) -> LocalStic
     if not processed:
         raise PackBuilderError("Sticker list is empty after processing")
     if len(processed) > SIGNAL_MAX_STICKERS:
-        raise PackBuilderError(
-            f"Signal allows up to 200 stickers; got {len(processed)}"
-        )
+        raise PackBuilderError(f"Signal allows up to 200 stickers; got {len(processed)}")
     if pack.cover_processed is None:
         raise PackBuilderError("Pack has no processed cover image")
 

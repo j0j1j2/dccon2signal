@@ -5,7 +5,9 @@ from PIL import Image, ImageSequence
 from dccon2signal.models import DcconPack, ImageExt, ProcessedExt
 
 SIGNAL_SIZE = 512
-SIGNAL_MAX_BYTES = 300 * 1024
+# Signal's per-sticker limit is "300 KB" — using the SI definition (300,000 bytes)
+# to stay safely under the server-side check.
+SIGNAL_MAX_BYTES = 300_000
 WHITE_THRESHOLD = 240
 
 
@@ -16,7 +18,7 @@ def _remove_white_bg(img: Image.Image) -> Image.Image:
     width, height = rgba.size
     for y in range(height):
         for x in range(width):
-            r, g, b, a = pixels[x, y]
+            r, g, b, a = pixels[x, y]  # type: ignore[misc]
             if r >= WHITE_THRESHOLD and g >= WHITE_THRESHOLD and b >= WHITE_THRESHOLD:
                 pixels[x, y] = (r, g, b, 0)
     return rgba
@@ -67,7 +69,7 @@ def process_sticker_bytes(
 
     if source_ext == "gif" and is_animated and static_only:
         img.seek(0)
-        img = img.copy()
+        img = img.copy()  # type: ignore[assignment]
 
     processed = _remove_white_bg(img) if remove_bg else img.convert("RGBA")
     fitted = _fit_512(processed)
@@ -108,9 +110,7 @@ def _encode_apng_under_limit(
         sub_frames = frames[::stride]
         if len(sub_frames) < 2:
             break
-        sub_durations = [
-            sum(durations[i : i + stride]) for i in range(0, len(durations), stride)
-        ]
+        sub_durations = [sum(durations[i : i + stride]) for i in range(0, len(durations), stride)]
         out = _encode_apng(sub_frames, sub_durations)
         if len(out) <= SIGNAL_MAX_BYTES:
             return out, "apng"

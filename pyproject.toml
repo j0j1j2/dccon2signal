@@ -45,3 +45,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 files = ["src/dccon2signal/models.py", "src/dccon2signal/scraper.py", "src/dccon2signal/image_proc.py", "src/dccon2signal/pack_builder.py", "src/dccon2signal/persistence.py"]
+
+[[tool.mypy.overrides]]
+module = "signalstickers_client.*"
+ignore_missing_imports = true

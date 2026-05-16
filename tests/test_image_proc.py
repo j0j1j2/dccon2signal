@@ -43,9 +43,7 @@ def test_process_static_png_returns_512_rgba(sample_static_png):
 
 
 def test_process_static_removes_white_background():
-    out, _ = process_sticker_bytes(
-        _synth_white_border_png(), source_ext="png", remove_bg=True
-    )
+    out, _ = process_sticker_bytes(_synth_white_border_png(), source_ext="png", remove_bg=True)
     img = _decode(out)
     border = img.getpixel(_BORDER_PIXEL)
     interior = img.getpixel(_INTERIOR_PIXEL)
@@ -56,9 +54,7 @@ def test_process_static_removes_white_background():
 
 
 def test_process_static_keeps_background_when_disabled():
-    out, _ = process_sticker_bytes(
-        _synth_white_border_png(), source_ext="png", remove_bg=False
-    )
+    out, _ = process_sticker_bytes(_synth_white_border_png(), source_ext="png", remove_bg=False)
     img = _decode(out)
     border = img.getpixel(_BORDER_PIXEL)
     assert isinstance(border, tuple)
@@ -66,9 +62,7 @@ def test_process_static_keeps_background_when_disabled():
 
 
 def test_animated_gif_becomes_apng_under_limit(sample_animated_gif):
-    out, ext = process_sticker_bytes(
-        sample_animated_gif, source_ext="gif", remove_bg=True
-    )
+    out, ext = process_sticker_bytes(sample_animated_gif, source_ext="gif", remove_bg=True)
     assert ext == "apng"
     img = _decode(out)
     assert getattr(img, "is_animated", False) is True

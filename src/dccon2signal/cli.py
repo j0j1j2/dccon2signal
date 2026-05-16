@@ -68,9 +68,7 @@ def main(
     verbose: bool,
 ) -> None:
     """Convert DCInside DCcon package(s) to Signal sticker pack(s)."""
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO, format="%(message)s"
-    )
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO, format="%(message)s")
 
     emoji_map: dict[str, str] | None = None
     if emoji_map_path is not None:
@@ -138,9 +136,7 @@ async def _run_one(
         pack.title = title_override
     if author_override:
         pack.author = author_override
-    click.echo(
-        f"  Fetched: {pack.title!r} ({len(pack.stickers)} stickers) by {pack.author!r}"
-    )
+    click.echo(f"  Fetched: {pack.title!r} ({len(pack.stickers)} stickers) by {pack.author!r}")
 
     await downloader.download_all(pack, client)
     successful = sum(1 for s in pack.stickers if s.image_bytes is not None)

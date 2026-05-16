@@ -13,9 +13,7 @@ HEADERS = {
 }
 
 
-async def _fetch_one(
-    client: httpx.AsyncClient, url: str, *, retries: int
-) -> bytes | None:
+async def _fetch_one(client: httpx.AsyncClient, url: str, *, retries: int) -> bytes | None:
     last_error: Exception | None = None
     for attempt in range(retries + 1):
         try:

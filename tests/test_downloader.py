@@ -61,9 +61,7 @@ async def test_download_all_skips_failed(sample_static_png):
     respx.get("https://dcimg5.dcinside.com/dccon.php?no=COVER").respond(
         200, content=sample_static_png
     )
-    respx.get("https://dcimg5.dcinside.com/dccon.php?no=S1").respond(
-        200, content=sample_static_png
-    )
+    respx.get("https://dcimg5.dcinside.com/dccon.php?no=S1").respond(200, content=sample_static_png)
     respx.get("https://dcimg5.dcinside.com/dccon.php?no=S2").respond(404)
 
     pack = _make_pack()
@@ -80,12 +78,8 @@ async def test_download_sends_referer(sample_static_png):
     route = respx.get("https://dcimg5.dcinside.com/dccon.php?no=COVER").respond(
         200, content=sample_static_png
     )
-    respx.get("https://dcimg5.dcinside.com/dccon.php?no=S1").respond(
-        200, content=sample_static_png
-    )
-    respx.get("https://dcimg5.dcinside.com/dccon.php?no=S2").respond(
-        200, content=sample_static_png
-    )
+    respx.get("https://dcimg5.dcinside.com/dccon.php?no=S1").respond(200, content=sample_static_png)
+    respx.get("https://dcimg5.dcinside.com/dccon.php?no=S2").respond(200, content=sample_static_png)
 
     pack = _make_pack()
     async with httpx.AsyncClient() as client:
