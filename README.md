@@ -38,14 +38,14 @@ out/170660/
 
 ## 자동 업로드 — Signal 인증 설정
 
-자동 업로드는 Signal 계정의 `username` (전화번호) + `password` (Signal 프로토콜용 비밀번호, 앱 잠금 번호 아님) 가 필요합니다.
+자동 업로드는 Signal 계정의 `username` + `password` 가 필요합니다.
 
-⚠️ **최신 Signal Desktop (6.x+) 은 `config.json` 에 비밀번호를 평문 저장하지 않습니다.** 대신 `signal-cli` 를 폰 Signal 계정의 **보조 디바이스로 링크**해서 자격증명을 얻습니다. 새 전화번호나 SMS 인증 필요 없음.
+⚠️ **최신 Signal Desktop (6.x+) 은 `config.json` 에 비밀번호를 평문 저장하지 않습니다** (`encryptedKey` 만 존재). 대신 `signal-cli` 를 폰 Signal 계정의 **보조 디바이스로 링크**해서 자격증명을 얻습니다. 새 전화번호나 SMS 인증 필요 없음.
 
 ### 1. signal-cli 설치
 
 ```bash
-brew install signal-cli
+brew install signal-cli jq
 ```
 
 ### 2. 폰 Signal 계정에 보조 디바이스로 링크
@@ -54,7 +54,7 @@ brew install signal-cli
 signal-cli link -n "dccon2signal"
 ```
 
-→ `tsdevice:/?uuid=...&pub_key=...` 형식의 URI 가 출력됩니다 (또는 QR 코드).
+→ `sgnl://linkdevice?uuid=...&pub_key=...` 형식의 URI 가 출력됩니다 (또는 QR 코드).
 
 ### 3. 휴대폰 Signal 앱에서 디바이스 연결
 
@@ -62,24 +62,40 @@ signal-cli link -n "dccon2signal"
 2. 카메라로 터미널의 QR 스캔 (또는 URI 직접 입력)
 3. 디바이스 이름 확인 → **Link**
 
-링크 성공하면 터미널의 `signal-cli` 가 자동으로 완료 처리됩니다.
+링크 성공하면 터미널의 `signal-cli` 가 자동으로 완료 처리되고, 자격증명 파일이 `~/.local/share/signal-cli/data/` 에 생성됩니다.
 
 ### 4. auth.json 생성
 
+⚠️ **중요**: 보조 디바이스 (`isMultiDevice: true`) 인 경우 Signal 의 chat 서비스는 username 으로 **`{ACI}.{deviceId}`** 형식을 기대합니다. 일반 전화번호 (`+82...`) 나 `{number}.{deviceId}` 를 쓰면 `401 Invalid authentication` 이 납니다.
+
+`ACI` (Account Identifier) 는 `aciAccountData.serviceId` 에, `deviceId` 는 최상위에 있습니다:
+
 ```bash
-SIGNAL_DATA=$(ls ~/.local/share/signal-cli/data/+*.json | head -1)
+# signal-cli 가 생성한 데이터 파일 (숫자 이름) 찾기
+SIGNAL_DATA=$(jq -r '.accounts[0].path' ~/.local/share/signal-cli/data/accounts.json)
+SIGNAL_FILE="$HOME/.local/share/signal-cli/data/$SIGNAL_DATA"
+
 mkdir -p ~/.config/dccon2signal
-jq '{username: .username // .number, password: .password}' "$SIGNAL_DATA" \
+jq '{username: "\(.aciAccountData.serviceId).\(.deviceId|tostring)", password}' "$SIGNAL_FILE" \
   > ~/.config/dccon2signal/auth.json
 chmod 600 ~/.config/dccon2signal/auth.json
+
+# 확인 (password 는 길이만 표시, 노출 안함)
+jq '{username, password: (.password | "[" + (.|length|tostring) + " chars]")}' \
+  ~/.config/dccon2signal/auth.json
 ```
 
-`jq` 없으면 `brew install jq`. 또는 `~/.local/share/signal-cli/data/+xxx.json` 을 직접 열어서 `username` / `number` 와 `password` 값을 보고 수동으로 만들어도 됩니다:
+수동으로 만들 경우 `~/.local/share/signal-cli/data/<숫자>` 파일을 열어서:
+- `aciAccountData.serviceId` → ACI (UUID 형식, 예: `54ab151d-141a-49cd-94e5-01e4a25ce625`)
+- `deviceId` → 정수 (보통 2 이상, 폰이 1번)
+- `password` → 24자 랜덤 문자열
+
+조합해서 `auth.json` 작성:
 
 ```json
 {
-  "username": "+821012345678",
-  "password": "32-char-random-string"
+  "username": "54ab151d-141a-49cd-94e5-01e4a25ce625.3",
+  "password": "<24자 password>"
 }
 ```
 
@@ -95,6 +111,15 @@ Install: https://signal.art/addstickers/#pack_id=abc123&pack_key=def456
 ```
 
 이 링크를 폰에서 열면 Signal 앱이 알아서 팩을 설치합니다. 끝.
+
+### auth 안 풀릴 때 트러블슈팅
+
+| 증상 | 원인 / 해결 |
+|---|---|
+| `401 Invalid authentication` | username 형식 잘못. `{aci}.{deviceId}` 사용 확인. `{number}` 단독은 작동 안함 |
+| `403 Forbidden` | 디바이스가 unlink 됐을 가능성. `signal-cli list-devices` 로 확인 후 재링크 |
+| `Auth file not found` | `~/.config/dccon2signal/auth.json` 부재. 4단계 다시 |
+| `accounts.json` 에 `accounts: []` | 링크가 완료되지 않음. signal-cli link 단계 다시 |
 
 ## 자주 쓰는 옵션
 
