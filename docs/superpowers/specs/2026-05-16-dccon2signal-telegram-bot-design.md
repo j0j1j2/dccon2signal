@@ -27,14 +27,18 @@ Let users trigger DCcon → Signal sticker pack conversion from a Telegram chat.
 
 ## 3. User-Facing Behavior
 
-### 3.1 Commands
+### 3.1 Commands and message triggers
 
-| Command | Effect |
-|---|---|
-| `/start` or `/help` | Brief description + usage example |
-| `/con2signal <package_idx>` | Enqueue a DCcon → Signal conversion job |
+| Trigger | Where | Effect |
+|---|---|---|
+| `/start`, `/help` | anywhere | Brief description + usage example |
+| `/con2signal <package_idx>` | anywhere | Enqueue a DCcon → Signal conversion job |
+| Plain message `<package_idx>` (numeric) | **DM only** | Same as `/con2signal <id>` |
+| `@<botusername> <package_idx>` (mention + ID) | **group** | Same as `/con2signal <id>` |
 
-Anything else is ignored (no fuzzy parsing).
+The handler that catches the loose forms accepts only messages whose stripped content is a single numeric token (optionally preceded by the bot mention). Any other text is silently ignored — the bot does not chat. Spaces and a single optional URL prefix `https://dccon.dcinside.com/...#170660` are tolerated and the trailing digits extracted.
+
+The `/con2signal` command remains the canonical form (auto-completed by Telegram clients) and is always accepted.
 
 ### 3.2 Message lifecycle (happy path)
 
@@ -347,32 +351,74 @@ class Worker:
 
 ### 6.6 `handlers.py`
 
+Three handlers feed the same `_enqueue(...)` helper so the queuing logic isn't duplicated.
+
 ```python
-async def cmd_con2signal(update: Update, context: CallbackContext) -> None:
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "사용법: /con2signal <package_idx>\n예: /con2signal 170660"
-        )
-        return
-    if not args[0].isdigit():
-        await update.message.reply_text("디시콘 패키지 ID는 숫자여야 합니다.")
-        return
+_PKG_RE = re.compile(r"(?:dccon\.dcinside\.com/[^\s]*#)?(\d{3,})\s*$")
+"""Matches a bare ID like '170660' or a URL like 'https://dccon.dcinside.com/...#170660'."""
 
-    pkg = args[0]
-    position = context.application.job_queue_size + 1  # before submit
+
+def _extract_pkg(text: str) -> str | None:
+    m = _PKG_RE.search(text.strip())
+    return m.group(1) if m else None
+
+
+async def _enqueue(update: Update, context: CallbackContext, pkg: str) -> None:
+    queue = context.application.bot_data["queue"]
+    position = queue.size + 1
     reply = await update.message.reply_text(f"⏳ 큐 대기 중 ({position}번째)")
-
     job = Job(
         package_idx=pkg,
         chat_id=reply.chat_id,
         message_id=reply.message_id,
         submitted_at=time.time(),
     )
-    await context.application.job_queue_obj.submit(job)
+    await queue.submit(job)
 
 
-async def cmd_start_or_help(update: Update, context: CallbackContext) -> None: ...
+async def cmd_con2signal(update: Update, context: CallbackContext) -> None:
+    """/con2signal <id> — canonical command form."""
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text(
+            "사용법: /con2signal <package_idx>\n예: /con2signal 170660"
+        )
+        return
+    await _enqueue(update, context, context.args[0])
+
+
+async def msg_loose(update: Update, context: CallbackContext) -> None:
+    """Loose form: bare ID in DM, or '@bot <id>' mention in group.
+
+    Bound to filters.TEXT & ~filters.COMMAND. We narrow by chat type +
+    optional mention check, then by regex.
+    """
+    msg = update.message
+    text = msg.text or ""
+
+    if msg.chat.type == "private":
+        # DM: accept '<id>' or 'https://...#<id>'.
+        pkg = _extract_pkg(text)
+    else:
+        # Group: require explicit mention of the bot.
+        me = await context.bot.get_me()
+        mention = f"@{me.username}"
+        if mention not in text:
+            return
+        pkg = _extract_pkg(text.replace(mention, "", 1))
+
+    if pkg is not None:
+        await _enqueue(update, context, pkg)
+
+
+async def cmd_start_or_help(update: Update, context: CallbackContext) -> None:
+    await update.message.reply_text(
+        "DCcon → Signal 스티커팩 변환 봇\n\n"
+        "사용법:\n"
+        "  /con2signal <package_idx>\n"
+        "  또는 DM 에서 그냥 숫자만\n"
+        "  또는 그룹에서 '@봇이름 <package_idx>'\n\n"
+        "예: /con2signal 170660"
+    )
 ```
 
 ### 6.7 `__main__.py`
