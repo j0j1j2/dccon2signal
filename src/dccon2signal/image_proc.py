@@ -1,3 +1,5 @@
+import asyncio
+from collections.abc import Awaitable, Callable
 from io import BytesIO
 
 from PIL import Image, ImageSequence
@@ -175,13 +177,27 @@ def _encode_apng_under_limit(
     return static_out, "png"
 
 
-def process_pack(pack: DcconPack, *, remove_bg: bool = False, static_only: bool = False) -> None:
+def process_pack(
+    pack: DcconPack,
+    *,
+    remove_bg: bool = False,
+    static_only: bool = False,
+    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
+) -> None:
+    total = len(pack.stickers) + (1 if pack.cover_bytes is not None else 0)
+    done = 0
+
     if pack.cover_bytes is not None:
         pack.cover_processed, _ = process_sticker_bytes(
             pack.cover_bytes, source_ext="png", remove_bg=remove_bg, static_only=True
         )
+        done += 1
+        _emit_progress(on_progress, done, total)
+
     for s in pack.stickers:
         if s.image_bytes is None:
+            done += 1
+            _emit_progress(on_progress, done, total)
             continue
         s.processed_bytes, s.processed_ext = process_sticker_bytes(
             s.image_bytes,
@@ -189,3 +205,20 @@ def process_pack(pack: DcconPack, *, remove_bg: bool = False, static_only: bool 
             remove_bg=remove_bg,
             static_only=static_only,
         )
+        done += 1
+        _emit_progress(on_progress, done, total)
+
+
+def _emit_progress(
+    on_progress: Callable[[int, int], Awaitable[None]] | None,
+    done: int,
+    total: int,
+) -> None:
+    if on_progress is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop (sync CLI context). Drop the callback.
+        return
+    loop.create_task(on_progress(done, total))

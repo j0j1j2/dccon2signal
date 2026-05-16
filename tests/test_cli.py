@@ -42,9 +42,9 @@ def test_convert_only_no_upload(tmp_path: Path, fake_pack):
         return None
 
     with (
-        patch("dccon2signal.cli.scraper.fetch_pack", side_effect=_scrape),
-        patch("dccon2signal.cli.downloader.download_all", side_effect=_download),
-        patch("dccon2signal.cli.image_proc.process_pack") as proc,
+        patch("dccon2signal.pipeline.scraper.fetch_pack", side_effect=_scrape),
+        patch("dccon2signal.pipeline.downloader.download_all", side_effect=_download),
+        patch("dccon2signal.pipeline.image_proc.process_pack") as proc,
     ):
 
         def _fake_proc(pack, **_kw):
@@ -77,10 +77,10 @@ def test_upload_path_invokes_uploader(tmp_path: Path, fake_pack):
         return "abc", "def"
 
     with (
-        patch("dccon2signal.cli.scraper.fetch_pack", side_effect=_scrape),
-        patch("dccon2signal.cli.downloader.download_all", side_effect=_download),
-        patch("dccon2signal.cli.image_proc.process_pack") as proc,
-        patch("dccon2signal.cli.uploader.upload", side_effect=_upload),
+        patch("dccon2signal.pipeline.scraper.fetch_pack", side_effect=_scrape),
+        patch("dccon2signal.pipeline.downloader.download_all", side_effect=_download),
+        patch("dccon2signal.pipeline.image_proc.process_pack") as proc,
+        patch("dccon2signal.pipeline.uploader.upload", side_effect=_upload),
     ):
 
         def _fake_proc(pack, **_kw):

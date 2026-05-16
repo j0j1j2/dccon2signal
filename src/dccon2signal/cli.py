@@ -7,20 +7,6 @@ import sys
 from pathlib import Path
 
 import click
-import httpx
-
-from dccon2signal import (
-    auth as auth_mod,
-)
-from dccon2signal import (
-    downloader,
-    image_proc,
-    pack_builder,
-    persistence,
-    scraper,
-    uploader,
-)
-from dccon2signal.models import DcconPack
 
 DEFAULT_AUTH_PATH = Path.home() / ".config" / "dccon2signal" / "auth.json"
 
@@ -105,25 +91,22 @@ async def _run_all(
     emoji_map: dict[str, str] | None,
     auth_path: Path,
 ) -> None:
-    async with httpx.AsyncClient() as client:
-        for pid in ids:
-            await _run_one(
-                pid,
-                client,
-                title_override,
-                author_override,
-                out_dir,
-                no_upload=no_upload,
-                remove_bg=remove_bg,
-                static_only=static_only,
-                emoji_map=emoji_map,
-                auth_path=auth_path,
-            )
+    for pid in ids:
+        await _run_one(
+            pid,
+            title_override,
+            author_override,
+            out_dir,
+            no_upload=no_upload,
+            remove_bg=remove_bg,
+            static_only=static_only,
+            emoji_map=emoji_map,
+            auth_path=auth_path,
+        )
 
 
 async def _run_one(
     package_idx: str,
-    client: httpx.AsyncClient,
     title_override: str | None,
     author_override: str | None,
     out_dir: Path,
@@ -134,33 +117,36 @@ async def _run_one(
     emoji_map: dict[str, str] | None,
     auth_path: Path,
 ) -> None:
+    from dccon2signal.pipeline import Stage, convert_pack
+
     click.echo(f"→ {package_idx}")
-    pack: DcconPack = await scraper.fetch_pack(package_idx, client)
-    if title_override:
-        pack.title = title_override
-    if author_override:
-        pack.author = author_override
-    click.echo(f"  Fetched: {pack.title!r} ({len(pack.stickers)} stickers) by {pack.author!r}")
 
-    await downloader.download_all(pack, client)
-    successful = sum(1 for s in pack.stickers if s.image_bytes is not None)
-    click.echo(f"  Downloaded: {successful}/{len(pack.stickers)} images")
+    async def echo(stage: Stage, progress=None, detail=""):
+        msg = stage.value
+        if progress is not None:
+            msg = f"{msg} {progress[0]}/{progress[1]}"
+        if detail:
+            msg = f"{msg} — {detail}"
+        click.echo(f"  {msg}")
 
-    image_proc.process_pack(pack, remove_bg=remove_bg, static_only=static_only)
-    processed_count = sum(1 for s in pack.stickers if s.processed_bytes is not None)
-    click.echo(f"  Processed: {processed_count}/{len(pack.stickers)}")
+    result = await convert_pack(
+        package_idx,
+        auth_path=auth_path,
+        out_dir=out_dir,
+        upload=not no_upload,
+        remove_bg=remove_bg,
+        static_only=static_only,
+        title_override=title_override,
+        author_override=author_override,
+        emoji_map=emoji_map,
+        on_status=echo,
+    )
 
-    pack_dir = out_dir / pack.package_idx
-    persistence.save_pack(pack, pack_dir)
-    click.echo(f"  Saved to {pack_dir}")
-
-    if no_upload:
-        return
-
-    auth = auth_mod.load(auth_path)
-    signal_pack = pack_builder.build(pack, emoji_map=emoji_map)
-    pack_id, pack_key = await uploader.upload(signal_pack, auth)
-    click.echo(f"  Install: {uploader.install_url(pack_id, pack_key)}")
+    click.echo(
+        f"  Fetched: {result.title!r} ({result.sticker_count} stickers) by {result.author!r}"
+    )
+    if result.install_url:
+        click.echo(f"  Install: {result.install_url}")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 
 import httpx
 
@@ -34,18 +35,29 @@ async def download_all(
     *,
     concurrency: int = 8,
     retries: int = 3,
+    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> None:
     sem = asyncio.Semaphore(concurrency)
+    total = len(pack.stickers) + 1  # +1 for cover
+    done = 0
+    lock = asyncio.Lock()
 
-    async def _bounded_fetch(url: str) -> bytes | None:
+    async def _bumped_fetch(url: str) -> bytes | None:
+        nonlocal done
         async with sem:
-            return await _fetch_one(client, url, retries=retries)
+            data = await _fetch_one(client, url, retries=retries)
+        async with lock:
+            done += 1
+            current = done
+        if on_progress is not None:
+            await on_progress(current, total)
+        return data
 
     async def _fetch_cover() -> None:
-        pack.cover_bytes = await _bounded_fetch(pack.cover_url)
+        pack.cover_bytes = await _bumped_fetch(pack.cover_url)
 
     async def _fetch_sticker(s: DcconSticker) -> None:
-        s.image_bytes = await _bounded_fetch(s.image_url)
+        s.image_bytes = await _bumped_fetch(s.image_url)
 
     await asyncio.gather(
         _fetch_cover(),
