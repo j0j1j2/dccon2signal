@@ -35,12 +35,12 @@ def _make_pack() -> DcconPack:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_download_all_populates_bytes(sample_static_jpg, sample_animated_gif):
+async def test_download_all_populates_bytes(sample_static_png, sample_animated_gif):
     respx.get("https://dcimg5.dcinside.com/dccon.php?no=COVER").respond(
-        200, content=sample_static_jpg, headers={"content-type": "image/jpeg"}
+        200, content=sample_static_png, headers={"content-type": "image/jpeg"}
     )
     respx.get("https://dcimg5.dcinside.com/dccon.php?no=S1").respond(
-        200, content=sample_static_jpg, headers={"content-type": "image/jpeg"}
+        200, content=sample_static_png, headers={"content-type": "image/jpeg"}
     )
     respx.get("https://dcimg5.dcinside.com/dccon.php?no=S2").respond(
         200, content=sample_animated_gif, headers={"content-type": "image/gif"}
@@ -50,19 +50,19 @@ async def test_download_all_populates_bytes(sample_static_jpg, sample_animated_g
     async with httpx.AsyncClient() as client:
         await download_all(pack, client)
 
-    assert pack.cover_bytes == sample_static_jpg
-    assert pack.stickers[0].image_bytes == sample_static_jpg
+    assert pack.cover_bytes == sample_static_png
+    assert pack.stickers[0].image_bytes == sample_static_png
     assert pack.stickers[1].image_bytes == sample_animated_gif
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_download_all_skips_failed(sample_static_jpg):
+async def test_download_all_skips_failed(sample_static_png):
     respx.get("https://dcimg5.dcinside.com/dccon.php?no=COVER").respond(
-        200, content=sample_static_jpg
+        200, content=sample_static_png
     )
     respx.get("https://dcimg5.dcinside.com/dccon.php?no=S1").respond(
-        200, content=sample_static_jpg
+        200, content=sample_static_png
     )
     respx.get("https://dcimg5.dcinside.com/dccon.php?no=S2").respond(404)
 
@@ -70,21 +70,21 @@ async def test_download_all_skips_failed(sample_static_jpg):
     async with httpx.AsyncClient() as client:
         await download_all(pack, client, retries=1)
 
-    assert pack.stickers[0].image_bytes == sample_static_jpg
+    assert pack.stickers[0].image_bytes == sample_static_png
     assert pack.stickers[1].image_bytes is None
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_download_sends_referer(sample_static_jpg):
+async def test_download_sends_referer(sample_static_png):
     route = respx.get("https://dcimg5.dcinside.com/dccon.php?no=COVER").respond(
-        200, content=sample_static_jpg
+        200, content=sample_static_png
     )
     respx.get("https://dcimg5.dcinside.com/dccon.php?no=S1").respond(
-        200, content=sample_static_jpg
+        200, content=sample_static_png
     )
     respx.get("https://dcimg5.dcinside.com/dccon.php?no=S2").respond(
-        200, content=sample_static_jpg
+        200, content=sample_static_png
     )
 
     pack = _make_pack()

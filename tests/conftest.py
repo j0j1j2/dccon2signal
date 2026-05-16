@@ -11,8 +11,8 @@ def fixtures_dir() -> Path:
 
 
 @pytest.fixture
-def sample_static_jpg(fixtures_dir: Path) -> bytes:
-    return (fixtures_dir / "sample_static_200x200.jpg").read_bytes()
+def sample_static_png(fixtures_dir: Path) -> bytes:
+    return (fixtures_dir / "sample_static_200x200.png").read_bytes()
 
 
 @pytest.fixture
