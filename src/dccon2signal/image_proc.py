@@ -75,11 +75,48 @@ def process_sticker_bytes(
 
 
 def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, ProcessedExt]:
-    img.seek(0)
-    first = img.copy()
-    processed = _remove_white_bg(first) if remove_bg else first.convert("RGBA")
-    fitted = _fit_512(processed)
-    return _shrink_png_under_limit(fitted), "png"
+    raw_frames: list[Image.Image] = []
+    durations: list[int] = []
+    for frame in ImageSequence.Iterator(img):
+        f = frame.convert("RGBA")
+        if remove_bg:
+            f = _remove_white_bg(f)
+        raw_frames.append(_fit_512(f))
+        durations.append(int(frame.info.get("duration", 100)))
+
+    return _encode_apng_under_limit(raw_frames, durations)
+
+
+def _encode_apng(frames: list[Image.Image], durations: list[int]) -> bytes:
+    buf = BytesIO()
+    frames[0].save(
+        buf,
+        format="PNG",
+        save_all=True,
+        append_images=frames[1:],
+        duration=durations,
+        loop=0,
+        disposal=2,
+    )
+    return buf.getvalue()
+
+
+def _encode_apng_under_limit(
+    frames: list[Image.Image], durations: list[int]
+) -> tuple[bytes, ProcessedExt]:
+    for stride in (1, 2, 3, 4, 6, 8, 12):
+        sub_frames = frames[::stride]
+        if len(sub_frames) < 2:
+            break
+        sub_durations = [
+            sum(durations[i : i + stride]) for i in range(0, len(durations), stride)
+        ]
+        out = _encode_apng(sub_frames, sub_durations)
+        if len(out) <= SIGNAL_MAX_BYTES:
+            return out, "apng"
+
+    static_out = _shrink_png_under_limit(frames[0])
+    return static_out, "png"
 
 
 def process_pack(pack: DcconPack, *, remove_bg: bool = True, static_only: bool = False) -> None:

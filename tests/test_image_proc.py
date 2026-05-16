@@ -63,3 +63,49 @@ def test_process_static_keeps_background_when_disabled():
     border = img.getpixel(_BORDER_PIXEL)
     assert isinstance(border, tuple)
     assert border[3] == 255, f"with remove_bg=False, white border stays opaque, got {border}"
+
+
+def test_animated_gif_becomes_apng_under_limit(sample_animated_gif):
+    out, ext = process_sticker_bytes(
+        sample_animated_gif, source_ext="gif", remove_bg=True
+    )
+    assert ext == "apng"
+    img = _decode(out)
+    assert getattr(img, "is_animated", False) is True
+    assert img.size == (SIGNAL_SIZE, SIGNAL_SIZE)
+    assert len(out) <= SIGNAL_MAX_BYTES
+
+
+def test_animated_gif_static_only_returns_png(sample_animated_gif):
+    out, ext = process_sticker_bytes(
+        sample_animated_gif, source_ext="gif", remove_bg=True, static_only=True
+    )
+    assert ext == "png"
+    img = _decode(out)
+    assert img.size == (SIGNAL_SIZE, SIGNAL_SIZE)
+    assert not getattr(img, "is_animated", False)
+
+
+def test_process_pack_populates_processed_fields(sample_static_png, sample_animated_gif):
+    pack = DcconPack(
+        package_idx="1",
+        title="t",
+        author="a",
+        description="d",
+        cover_url="u",
+        cover_bytes=sample_static_png,
+    )
+    pack.stickers.append(
+        DcconSticker(
+            idx="1",
+            sort=1,
+            title="s",
+            ext="gif",
+            image_url="u",
+            image_bytes=sample_animated_gif,
+        )
+    )
+    process_pack(pack)
+    assert pack.cover_processed is not None
+    assert pack.stickers[0].processed_bytes is not None
+    assert pack.stickers[0].processed_ext == "apng"
