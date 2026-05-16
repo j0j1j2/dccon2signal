@@ -9,6 +9,10 @@ ExecStart=%h/projects/signalsticker/.venv/bin/python -m dccon2signal_bot
 Restart=on-failure
 RestartSec=10
 EnvironmentFile=%h/.config/dccon2signal-bot.env
+# Bot cleans up gracefully in 1-2s normally. After 10s force-kill so restarts
+# don't hang waiting for a stuck long-polling socket.
+TimeoutStopSec=10
+KillMode=mixed
 
 [Install]
 WantedBy=default.target
