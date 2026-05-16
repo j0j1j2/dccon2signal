@@ -27,40 +27,29 @@ async def _enqueue(update, context, pkg: str) -> None:
     await queue.submit(job)
 
 
-async def cmd_con2signal(update, context) -> None:
-    args = getattr(context, "args", None) or []
-    if not args or not args[0].isdigit():
-        await update.message.reply_text(
-            "사용법: /con2signal <package_idx>\n예: /con2signal 170660\n"
-            "디시콘 패키지 ID는 숫자여야 합니다."
-        )
-        return
-    await _enqueue(update, context, args[0])
+async def msg_mention(update, context) -> None:
+    """Single trigger: '@botname <package_idx>' in any chat type.
 
-
-async def msg_loose(update, context) -> None:
+    Mention required even in DM, so a stray '170660' doesn't accidentally
+    enqueue work.
+    """
     msg = update.message
     text = msg.text or ""
 
-    if msg.chat.type == "private":
-        pkg = _extract_pkg(text)
-    else:
-        me = await context.bot.get_me()
-        mention = f"@{me.username}"
-        if mention not in text:
-            return
-        pkg = _extract_pkg(text.replace(mention, "", 1))
+    me = await context.bot.get_me()
+    mention = f"@{me.username}"
+    if mention not in text:
+        return
 
+    pkg = _extract_pkg(text.replace(mention, "", 1))
     if pkg is not None:
         await _enqueue(update, context, pkg)
 
 
 async def cmd_start_or_help(update, context) -> None:
+    me = await context.bot.get_me()
     await update.message.reply_text(
         "DCcon → Signal 스티커팩 변환 봇\n\n"
-        "사용법:\n"
-        "  /con2signal <package_idx>\n"
-        "  DM 에서는 그냥 숫자만 보내도 됩니다\n"
-        "  그룹에서는 '@봇이름 <package_idx>'\n\n"
-        "예: /con2signal 170660"
+        f"사용법: @{me.username} <package_idx>\n"
+        f"예: @{me.username} 170660"
     )

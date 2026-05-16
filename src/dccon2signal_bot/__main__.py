@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 
 from dccon2signal_bot.config import ConfigError, load
-from dccon2signal_bot.handlers import cmd_con2signal, cmd_start_or_help, msg_loose
+from dccon2signal_bot.handlers import cmd_start_or_help, msg_mention
 from dccon2signal_bot.queue import JobQueue
 from dccon2signal_bot.worker import Worker
 
@@ -39,8 +39,7 @@ async def _main() -> int:
 
     app.add_handler(CommandHandler("start", cmd_start_or_help))
     app.add_handler(CommandHandler("help", cmd_start_or_help))
-    app.add_handler(CommandHandler("con2signal", cmd_con2signal))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_loose))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_mention))
 
     worker = Worker(queue=queue, bot=app.bot, config=cfg)
 

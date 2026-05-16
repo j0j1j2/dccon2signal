@@ -85,7 +85,7 @@ async def convert_pack(
             await cb(Stage.PROCESSING, (done, total_))
 
         await cb(Stage.PROCESSING, (0, total))
-        image_proc.process_pack(
+        await image_proc.process_pack(
             pack,
             remove_bg=remove_bg,
             static_only=static_only,

@@ -80,7 +80,7 @@ def test_animated_gif_static_only_returns_png(sample_animated_gif):
     assert not getattr(img, "is_animated", False)
 
 
-def test_process_pack_populates_processed_fields(sample_static_png, sample_animated_gif):
+async def test_process_pack_populates_processed_fields(sample_static_png, sample_animated_gif):
     pack = DcconPack(
         package_idx="1",
         title="t",
@@ -99,7 +99,7 @@ def test_process_pack_populates_processed_fields(sample_static_png, sample_anima
             image_bytes=sample_animated_gif,
         )
     )
-    process_pack(pack)
+    await process_pack(pack)
     assert pack.cover_processed is not None
     assert pack.stickers[0].processed_bytes is not None
     assert pack.stickers[0].processed_ext == "webp"

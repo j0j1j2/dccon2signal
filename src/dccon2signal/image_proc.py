@@ -1,4 +1,3 @@
-import asyncio
 from collections.abc import Awaitable, Callable
 from io import BytesIO
 
@@ -175,13 +174,20 @@ def _encode_apng_under_limit(
     return static_out, "png"
 
 
-def process_pack(
+async def process_pack(
     pack: DcconPack,
     *,
     remove_bg: bool = False,
     static_only: bool = False,
     on_progress: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> None:
+    """Process every sticker (and the cover) in place.
+
+    Coroutine even though Pillow is sync: between stickers we directly await
+    on_progress, which both fires the callback in real time AND yields control
+    to the event loop so other tasks (e.g. the Telegram reporter's outgoing
+    edit_message_text) can run.
+    """
     total = len(pack.stickers) + (1 if pack.cover_bytes is not None else 0)
     done = 0
 
@@ -190,12 +196,14 @@ def process_pack(
             pack.cover_bytes, source_ext="png", remove_bg=remove_bg, static_only=True
         )
         done += 1
-        _emit_progress(on_progress, done, total)
+        if on_progress is not None:
+            await on_progress(done, total)
 
     for s in pack.stickers:
         if s.image_bytes is None:
             done += 1
-            _emit_progress(on_progress, done, total)
+            if on_progress is not None:
+                await on_progress(done, total)
             continue
         s.processed_bytes, s.processed_ext = process_sticker_bytes(
             s.image_bytes,
@@ -204,23 +212,5 @@ def process_pack(
             static_only=static_only,
         )
         done += 1
-        _emit_progress(on_progress, done, total)
-
-
-def _emit_progress(
-    on_progress: Callable[[int, int], Awaitable[None]] | None,
-    done: int,
-    total: int,
-) -> None:
-    if on_progress is None:
-        return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # No running loop (sync CLI context). Drop the callback.
-        return
-
-    async def _run() -> None:
-        await on_progress(done, total)
-
-    loop.create_task(_run())
+        if on_progress is not None:
+            await on_progress(done, total)
