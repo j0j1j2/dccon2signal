@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -40,9 +41,7 @@ async def test_worker_runs_success_path(fake_bot, tmp_path):
         )
 
     q = JobQueue()
-    await q.submit(
-        Job(package_idx="1", chat_id=10, message_id=20, submitted_at=time.time())
-    )
+    await q.submit(Job(package_idx="1", chat_id=10, message_id=20, submitted_at=time.time()))
 
     w = Worker(queue=q, bot=fake_bot, config=_cfg(tmp_path))
 
@@ -50,10 +49,8 @@ async def test_worker_runs_success_path(fake_bot, tmp_path):
         task = asyncio.create_task(w.run())
         await asyncio.sleep(0.1)
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
     texts = [e["text"] for e in fake_bot.edits]
     assert any("pack_id=abc" in t for t in texts)
@@ -89,10 +86,8 @@ async def test_worker_survives_exception(fake_bot, tmp_path):
         task = asyncio.create_task(w.run())
         await asyncio.sleep(0.2)
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
     assert calls["n"] == 2
     err_texts = [e["text"] for e in fake_bot.edits if e["message_id"] == 20]

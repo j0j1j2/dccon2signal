@@ -128,9 +128,7 @@ def _encode_webp_under_limit(
         sub_frames = frames[::stride]
         if not sub_frames:
             continue
-        sub_durations = [
-            sum(durations[i : i + stride]) for i in range(0, len(durations), stride)
-        ]
+        sub_durations = [sum(durations[i : i + stride]) for i in range(0, len(durations), stride)]
         for quality in (80, 70, 60, 50):
             if len(sub_frames) == 1:
                 # No animation left — fall back to static WebP and let caller
@@ -221,4 +219,8 @@ def _emit_progress(
     except RuntimeError:
         # No running loop (sync CLI context). Drop the callback.
         return
-    loop.create_task(on_progress(done, total))
+
+    async def _run() -> None:
+        await on_progress(done, total)
+
+    loop.create_task(_run())

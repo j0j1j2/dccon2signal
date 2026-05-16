@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import signal as signal_mod
 import sys
@@ -56,10 +57,8 @@ async def _main() -> int:
 
     loop = asyncio.get_running_loop()
     for sig in (signal_mod.SIGINT, signal_mod.SIGTERM):
-        try:
+        with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, _request_stop)
-        except NotImplementedError:
-            pass
 
     logger.info("Bot started, polling for updates")
     await stop.wait()

@@ -10,10 +10,7 @@ def _extract_pkg(text: str) -> str | None:
     stripped = text.strip()
     # For bare input we need the entire (trimmed) string to match; for URLs we
     # search anywhere because the URL has additional prefix characters.
-    if "://" in stripped:
-        m = _PKG_RE.search(stripped)
-    else:
-        m = _PKG_RE.fullmatch(stripped)
+    m = _PKG_RE.search(stripped) if "://" in stripped else _PKG_RE.fullmatch(stripped)
     return m.group(1) if m else None
 
 

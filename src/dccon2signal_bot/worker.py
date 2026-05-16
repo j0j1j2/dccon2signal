@@ -33,7 +33,9 @@ class Worker:
 
     async def _process(self, job: Job) -> None:
         reporter = StatusReporter(
-            self._bot, chat_id=job.chat_id, message_id=job.message_id,
+            self._bot,
+            chat_id=job.chat_id,
+            message_id=job.message_id,
         )
         try:
             result = await convert_pack(
@@ -49,13 +51,13 @@ class Worker:
             await self._report_failure(reporter, e, job, hide_detail=True)
         else:
             final = (
-                f"✅ 완료!\n"
-                f"팩: {result.title!r} ({result.sticker_count}개)\n"
-                f"{result.install_url}"
+                f"✅ 완료!\n팩: {result.title!r} ({result.sticker_count}개)\n{result.install_url}"
             )
             try:
                 await self._bot.edit_message_text(
-                    text=final, chat_id=job.chat_id, message_id=job.message_id,
+                    text=final,
+                    chat_id=job.chat_id,
+                    message_id=job.message_id,
                 )
             except Exception:
                 logger.warning("Could not edit final message", exc_info=True)
@@ -68,11 +70,7 @@ class Worker:
         *,
         hide_detail: bool = False,
     ) -> None:
-        msg = (
-            "알 수 없는 오류, 관리자에게 알림"
-            if hide_detail
-            else f"{type(exc).__name__}: {exc}"
-        )
+        msg = "알 수 없는 오류, 관리자에게 알림" if hide_detail else f"{type(exc).__name__}: {exc}"
         await reporter.update(Stage.FAILED, detail=msg)
         if isinstance(exc, _ADMIN_PAGE) and self._config.admin_chat_id:
             try:

@@ -7,8 +7,11 @@ from dccon2signal_bot.reporter import StatusReporter
 @pytest.mark.asyncio
 async def test_first_update_flushes(fake_bot, fake_clock):
     r = StatusReporter(
-        fake_bot, chat_id=10, message_id=20,
-        min_interval=1.5, clock=fake_clock.monotonic,
+        fake_bot,
+        chat_id=10,
+        message_id=20,
+        min_interval=1.5,
+        clock=fake_clock.monotonic,
     )
     await r.update(Stage.FETCHING)
     assert len(fake_bot.edits) == 1
@@ -18,8 +21,11 @@ async def test_first_update_flushes(fake_bot, fake_clock):
 @pytest.mark.asyncio
 async def test_rapid_updates_are_throttled(fake_bot, fake_clock):
     r = StatusReporter(
-        fake_bot, chat_id=10, message_id=20,
-        min_interval=1.5, clock=fake_clock.monotonic,
+        fake_bot,
+        chat_id=10,
+        message_id=20,
+        min_interval=1.5,
+        clock=fake_clock.monotonic,
     )
     await r.update(Stage.DOWNLOADING, (1, 10))
     await r.update(Stage.DOWNLOADING, (2, 10))
@@ -30,8 +36,11 @@ async def test_rapid_updates_are_throttled(fake_bot, fake_clock):
 @pytest.mark.asyncio
 async def test_update_after_interval_flushes(fake_bot, fake_clock):
     r = StatusReporter(
-        fake_bot, chat_id=10, message_id=20,
-        min_interval=1.5, clock=fake_clock.monotonic,
+        fake_bot,
+        chat_id=10,
+        message_id=20,
+        min_interval=1.5,
+        clock=fake_clock.monotonic,
     )
     await r.update(Stage.DOWNLOADING, (1, 10))
     fake_clock.advance(2.0)
@@ -42,8 +51,11 @@ async def test_update_after_interval_flushes(fake_bot, fake_clock):
 @pytest.mark.asyncio
 async def test_done_always_flushes(fake_bot, fake_clock):
     r = StatusReporter(
-        fake_bot, chat_id=10, message_id=20,
-        min_interval=1.5, clock=fake_clock.monotonic,
+        fake_bot,
+        chat_id=10,
+        message_id=20,
+        min_interval=1.5,
+        clock=fake_clock.monotonic,
     )
     await r.update(Stage.DOWNLOADING, (1, 10))
     await r.update(Stage.DONE)
@@ -54,8 +66,11 @@ async def test_done_always_flushes(fake_bot, fake_clock):
 @pytest.mark.asyncio
 async def test_unchanged_text_not_resent(fake_bot, fake_clock):
     r = StatusReporter(
-        fake_bot, chat_id=10, message_id=20,
-        min_interval=0.0, clock=fake_clock.monotonic,
+        fake_bot,
+        chat_id=10,
+        message_id=20,
+        min_interval=0.0,
+        clock=fake_clock.monotonic,
     )
     await r.update(Stage.DOWNLOADING, (5, 10))
     await r.update(Stage.DOWNLOADING, (5, 10))
@@ -69,7 +84,10 @@ async def test_edit_failure_does_not_raise(fake_clock):
             raise RuntimeError("message deleted")
 
     r = StatusReporter(
-        BrokenBot(), chat_id=10, message_id=20,
-        min_interval=0.0, clock=fake_clock.monotonic,
+        BrokenBot(),
+        chat_id=10,
+        message_id=20,
+        min_interval=0.0,
+        clock=fake_clock.monotonic,
     )
     await r.update(Stage.DONE)

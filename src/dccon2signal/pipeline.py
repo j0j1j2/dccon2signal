@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
@@ -12,7 +12,7 @@ from dccon2signal import downloader, image_proc, pack_builder, persistence, scra
 from dccon2signal.uploader import install_url as _install_url
 
 
-class Stage(str, Enum):
+class Stage(StrEnum):
     QUEUED = "queued"
     FETCHING = "fetching"
     DOWNLOADING = "downloading"
