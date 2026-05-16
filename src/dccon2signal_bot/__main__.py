@@ -19,6 +19,23 @@ from dccon2signal_bot.queue import JobQueue
 from dccon2signal_bot.worker import Worker
 
 
+def _set_memory_cap_gb(gb: int) -> None:
+    """Cap process address space.
+
+    Pillow's decompression-bomb check is disabled (some DCcon GIFs trip
+    false positives), so we rely on an OS-level memory ceiling instead. A
+    real bomb hits the cap and raises MemoryError, which the worker's
+    skip-on-error catches — the bot survives.
+    """
+    try:
+        import resource
+
+        max_bytes = gb * 1024 * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (max_bytes, max_bytes))
+    except (ImportError, ValueError, OSError) as e:
+        logging.getLogger(__name__).warning("Could not set RLIMIT_AS: %s", e)
+
+
 async def _main() -> int:
     try:
         cfg = load()
@@ -31,6 +48,9 @@ async def _main() -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     logger = logging.getLogger(__name__)
+
+    # Defense against decompression-bomb GIFs uploaded to DCInside.
+    _set_memory_cap_gb(2)
 
     queue = JobQueue()
 

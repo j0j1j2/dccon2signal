@@ -1,9 +1,20 @@
+import logging
 from collections.abc import Awaitable, Callable
 from io import BytesIO
 
 from PIL import Image, ImageSequence
 
 from dccon2signal.models import DcconPack, ImageExt, ProcessedExt
+
+logger = logging.getLogger(__name__)
+
+# Some DCcon GIFs carry garbage dimension values in a stray frame header and
+# trigger Pillow's decompression-bomb safety check (verified: pixel data is
+# actually 200x200 in those frames, only the metadata is bogus). Disable
+# the Pillow check so we can decode them. Real-bomb defense is handled at
+# the bot entry point via RLIMIT_AS — a genuine bomb hits the OS memory
+# cap and raises MemoryError, which the per-sticker try/except below skips.
+Image.MAX_IMAGE_PIXELS = None
 
 SIGNAL_SIZE = 512
 # Signal's per-sticker limit is "300 KB" — using the SI definition (300,000 bytes)
@@ -139,9 +150,7 @@ def _encode_webp_under_limit(
         for quality in (70, 60, 50):
             if len(sub_frames) == 1:
                 buf = BytesIO()
-                sub_frames[0].save(
-                    buf, format="WEBP", quality=quality, method=WEBP_METHOD
-                )
+                sub_frames[0].save(buf, format="WEBP", quality=quality, method=WEBP_METHOD)
                 out = buf.getvalue()
             else:
                 out = _encode_webp(sub_frames, sub_durations, quality)
@@ -213,12 +222,24 @@ async def process_pack(
             if on_progress is not None:
                 await on_progress(done, total)
             continue
-        s.processed_bytes, s.processed_ext = process_sticker_bytes(
-            s.image_bytes,
-            source_ext=s.ext,
-            remove_bg=remove_bg,
-            static_only=static_only,
-        )
+        try:
+            s.processed_bytes, s.processed_ext = process_sticker_bytes(
+                s.image_bytes,
+                source_ext=s.ext,
+                remove_bg=remove_bg,
+                static_only=static_only,
+            )
+        except Exception as e:
+            # A single broken sticker (e.g. malformed GIF, decompression-bomb
+            # tripped) should NOT take down the whole pack — leave it
+            # unprocessed and persistence/pack_builder will skip it.
+            logger.warning(
+                "Skipping sticker sort=%s idx=%s: %s: %s",
+                s.sort,
+                s.idx,
+                type(e).__name__,
+                e,
+            )
         done += 1
         if on_progress is not None:
             await on_progress(done, total)
