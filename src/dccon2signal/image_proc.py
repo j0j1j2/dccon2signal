@@ -104,6 +104,12 @@ def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, Proc
     return _encode_webp_under_limit(raw_frames, durations)
 
 
+# WebP encoder method: 0 = fastest, 6 = best compression. method=2 cuts
+# encoding time ~50% vs method=4 while keeping files comfortably under 300KB
+# for typical DCcon animated frames.
+WEBP_METHOD = 2
+
+
 def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) -> bytes:
     buf = BytesIO()
     frames[0].save(
@@ -114,7 +120,7 @@ def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) 
         duration=durations,
         loop=0,
         quality=quality,
-        method=4,
+        method=WEBP_METHOD,
     )
     return buf.getvalue()
 
@@ -122,18 +128,20 @@ def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) 
 def _encode_webp_under_limit(
     frames: list[Image.Image], durations: list[int]
 ) -> tuple[bytes, ProcessedExt]:
-    # Try high-quality full-frame first, then drop quality, then drop frames.
+    # Start quality at 70 — empirically the highest that fits 300KB for typical
+    # 29-frame DCcon GIFs upscaled to 512x512. Starting at 80 cost a wasted
+    # encode pass on nearly every sticker.
     for stride in (1, 2, 3, 4):
         sub_frames = frames[::stride]
         if not sub_frames:
             continue
         sub_durations = [sum(durations[i : i + stride]) for i in range(0, len(durations), stride)]
-        for quality in (80, 70, 60, 50):
+        for quality in (70, 60, 50):
             if len(sub_frames) == 1:
-                # No animation left — fall back to static WebP and let caller
-                # decide if PNG would be smaller.
                 buf = BytesIO()
-                sub_frames[0].save(buf, format="WEBP", quality=quality, method=4)
+                sub_frames[0].save(
+                    buf, format="WEBP", quality=quality, method=WEBP_METHOD
+                )
                 out = buf.getvalue()
             else:
                 out = _encode_webp(sub_frames, sub_durations, quality)
