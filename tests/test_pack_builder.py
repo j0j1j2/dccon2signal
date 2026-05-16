@@ -74,6 +74,18 @@ def test_build_rejects_no_stickers():
         build(pack)
 
 
+def test_build_cover_uses_dedicated_slot():
+    """Regression: cover must NOT share id=0 with stickers[0], or the cover
+    upload overwrites the first sticker on Signal's CDN."""
+    pack = _pack_with_two_stickers()
+    signal_pack = build(pack)
+    sticker_ids = [s.id for s in signal_pack.stickers]
+    assert sticker_ids == [0, 1]
+    assert signal_pack.cover.id == 2, (
+        f"cover.id must equal len(stickers) (=2), got {signal_pack.cover.id}"
+    )
+
+
 def test_build_rejects_over_200_stickers():
     pack = _pack_with_two_stickers()
     pack.cover_processed = b"COVER"

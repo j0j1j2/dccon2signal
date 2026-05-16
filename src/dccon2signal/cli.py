@@ -37,7 +37,11 @@ DEFAULT_AUTH_PATH = Path.home() / ".config" / "dccon2signal" / "auth.json"
 )
 @click.option("--no-upload", is_flag=True, default=False, help="Skip Signal upload")
 @click.option(
-    "--no-bg-removal", is_flag=True, default=False, help="Disable white background removal"
+    "--remove-bg",
+    is_flag=True,
+    default=False,
+    help="Auto-remove near-white background to alpha. Off by default — many DCcons "
+    "have intentional white backgrounds or character fills that would get eaten.",
 )
 @click.option("--static-only", is_flag=True, default=False, help="Convert GIFs to static PNG only")
 @click.option(
@@ -61,7 +65,7 @@ def main(
     author: str | None,
     out_dir: Path,
     no_upload: bool,
-    no_bg_removal: bool,
+    remove_bg: bool,
     static_only: bool,
     emoji_map_path: Path | None,
     auth_path: Path,
@@ -81,7 +85,7 @@ def main(
             author,
             out_dir,
             no_upload=no_upload,
-            no_bg_removal=no_bg_removal,
+            remove_bg=remove_bg,
             static_only=static_only,
             emoji_map=emoji_map,
             auth_path=auth_path,
@@ -96,7 +100,7 @@ async def _run_all(
     out_dir: Path,
     *,
     no_upload: bool,
-    no_bg_removal: bool,
+    remove_bg: bool,
     static_only: bool,
     emoji_map: dict[str, str] | None,
     auth_path: Path,
@@ -110,7 +114,7 @@ async def _run_all(
                 author_override,
                 out_dir,
                 no_upload=no_upload,
-                no_bg_removal=no_bg_removal,
+                remove_bg=remove_bg,
                 static_only=static_only,
                 emoji_map=emoji_map,
                 auth_path=auth_path,
@@ -125,7 +129,7 @@ async def _run_one(
     out_dir: Path,
     *,
     no_upload: bool,
-    no_bg_removal: bool,
+    remove_bg: bool,
     static_only: bool,
     emoji_map: dict[str, str] | None,
     auth_path: Path,
@@ -142,7 +146,7 @@ async def _run_one(
     successful = sum(1 for s in pack.stickers if s.image_bytes is not None)
     click.echo(f"  Downloaded: {successful}/{len(pack.stickers)} images")
 
-    image_proc.process_pack(pack, remove_bg=not no_bg_removal, static_only=static_only)
+    image_proc.process_pack(pack, remove_bg=remove_bg, static_only=static_only)
     processed_count = sum(1 for s in pack.stickers if s.processed_bytes is not None)
     click.echo(f"  Processed: {processed_count}/{len(pack.stickers)}")
 

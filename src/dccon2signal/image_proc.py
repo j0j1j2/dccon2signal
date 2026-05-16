@@ -24,14 +24,24 @@ def _remove_white_bg(img: Image.Image) -> Image.Image:
     return rgba
 
 
-def _fit_512(img: Image.Image) -> Image.Image:
+def _fit_to_canvas(img: Image.Image, target_size: int) -> Image.Image:
+    """Resize so longest side = target_size, then center on target_size square."""
     img = img.convert("RGBA")
-    img.thumbnail((SIGNAL_SIZE, SIGNAL_SIZE), Image.Resampling.LANCZOS)
-    canvas = Image.new("RGBA", (SIGNAL_SIZE, SIGNAL_SIZE), (0, 0, 0, 0))
-    ox = (SIGNAL_SIZE - img.width) // 2
-    oy = (SIGNAL_SIZE - img.height) // 2
-    canvas.paste(img, (ox, oy), img)
+    scale = target_size / max(img.width, img.height)
+    new_w = round(img.width * scale)
+    new_h = round(img.height * scale)
+    resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    if new_w == target_size and new_h == target_size:
+        return resized
+    canvas = Image.new("RGBA", (target_size, target_size), (0, 0, 0, 0))
+    ox = (target_size - new_w) // 2
+    oy = (target_size - new_h) // 2
+    canvas.paste(resized, (ox, oy), resized)
     return canvas
+
+
+def _fit_512(img: Image.Image) -> Image.Image:
+    return _fit_to_canvas(img, SIGNAL_SIZE)
 
 
 def _encode_png(img: Image.Image) -> bytes:
@@ -58,7 +68,7 @@ def process_sticker_bytes(
     data: bytes,
     *,
     source_ext: ImageExt,
-    remove_bg: bool,
+    remove_bg: bool = False,
     static_only: bool = False,
 ) -> tuple[bytes, ProcessedExt]:
     img = Image.open(BytesIO(data))
@@ -77,16 +87,62 @@ def process_sticker_bytes(
 
 
 def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, ProcessedExt]:
+    # Animated stickers go out as animated WebP, which compresses ~5× better
+    # than APNG for cartoon-like content. This lets us keep the full 512×512
+    # canvas (matching static stickers) AND all frames within Signal's 300KB
+    # per-sticker budget.
     raw_frames: list[Image.Image] = []
     durations: list[int] = []
     for frame in ImageSequence.Iterator(img):
         f = frame.convert("RGBA")
         if remove_bg:
             f = _remove_white_bg(f)
-        raw_frames.append(_fit_512(f))
+        raw_frames.append(_fit_to_canvas(f, SIGNAL_SIZE))
         durations.append(int(frame.info.get("duration", 100)))
 
-    return _encode_apng_under_limit(raw_frames, durations)
+    return _encode_webp_under_limit(raw_frames, durations)
+
+
+def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) -> bytes:
+    buf = BytesIO()
+    frames[0].save(
+        buf,
+        format="WEBP",
+        save_all=True,
+        append_images=frames[1:],
+        duration=durations,
+        loop=0,
+        quality=quality,
+        method=4,
+    )
+    return buf.getvalue()
+
+
+def _encode_webp_under_limit(
+    frames: list[Image.Image], durations: list[int]
+) -> tuple[bytes, ProcessedExt]:
+    # Try high-quality full-frame first, then drop quality, then drop frames.
+    for stride in (1, 2, 3, 4):
+        sub_frames = frames[::stride]
+        if not sub_frames:
+            continue
+        sub_durations = [
+            sum(durations[i : i + stride]) for i in range(0, len(durations), stride)
+        ]
+        for quality in (80, 70, 60, 50):
+            if len(sub_frames) == 1:
+                # No animation left — fall back to static WebP and let caller
+                # decide if PNG would be smaller.
+                buf = BytesIO()
+                sub_frames[0].save(buf, format="WEBP", quality=quality, method=4)
+                out = buf.getvalue()
+            else:
+                out = _encode_webp(sub_frames, sub_durations, quality)
+            if len(out) <= SIGNAL_MAX_BYTES:
+                return out, "webp"
+
+    # Last resort: static PNG of frame 0 (uses PNG quantize fallback for size).
+    return _shrink_png_under_limit(frames[0]), "png"
 
 
 def _encode_apng(frames: list[Image.Image], durations: list[int]) -> bytes:
@@ -119,7 +175,7 @@ def _encode_apng_under_limit(
     return static_out, "png"
 
 
-def process_pack(pack: DcconPack, *, remove_bg: bool = True, static_only: bool = False) -> None:
+def process_pack(pack: DcconPack, *, remove_bg: bool = False, static_only: bool = False) -> None:
     if pack.cover_bytes is not None:
         pack.cover_processed, _ = process_sticker_bytes(
             pack.cover_bytes, source_ext="png", remove_bg=remove_bg, static_only=True

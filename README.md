@@ -3,8 +3,8 @@
 디시인사이드 디시콘(DCcon) 패키지를 Signal Messenger 스티커 팩으로 변환·업로드하는 CLI.
 
 - 디시콘 패키지 ID 만 입력하면 자동으로 스크래핑 → 변환 → Signal 업로드
-- GIF 디시콘은 **APNG** 로 변환 (움직임 유지)
-- 흰 배경 자동 투명화 (다크모드 호환)
+- 정적 콘은 **512×512 PNG**, GIF 콘은 **512×512 animated WebP** (모든 프레임 유지)
+- 원본 배경 유지가 기본 (디시콘은 보통 흰배경이 의도된 경우가 많음). 투명화 원하면 `--remove-bg`
 - 변환 결과는 항상 `out/<package_idx>/` 에 저장돼서 실패해도 안전
 
 ## 설치
@@ -28,8 +28,8 @@ uv run dccon2signal 170660 --no-upload
 out/170660/
 ├── cover.png            # 512×512 표지
 ├── stickers/
-│   ├── 1.png            # 정적 스티커
-│   ├── 2.apng           # 애니메이션 스티커
+│   ├── 1.png            # 정적 스티커 (PNG)
+│   ├── 2.webp           # 애니메이션 스티커 (animated WebP)
 │   └── ...
 └── manifest.json        # 팩 메타데이터
 ```
@@ -131,7 +131,7 @@ uv run dccon2signal <package_idx> [<package_idx> ...] [OPTIONS]
 |---|---|
 | `--no-upload` | 변환만, Signal 업로드 생략 (인증 불필요) |
 | `--static-only` | GIF 도 첫 프레임만 PNG 로 (정적) |
-| `--no-bg-removal` | 흰 배경 자동 투명화 끄기 |
+| `--remove-bg` | 흰 배경을 알파로 자동 제거 (기본 OFF — 캐릭터의 흰 부분도 같이 사라질 수 있어서) |
 | `--title TEXT` | 팩 제목 오버라이드 (기본: 디시콘 페이지 제목) |
 | `--author TEXT` | 작성자 오버라이드 (기본: 디시콘 판매자명) |
 | `--out-dir PATH` | 출력 디렉토리 (기본: `./out`) |
@@ -152,13 +152,13 @@ uv run dccon2signal 170660 12345 99999
 
 1. **Scraper** — `POST https://dccon.dcinside.com/index/package_detail` 로 패키지 메타데이터 + 스티커 이미지 경로 목록 받음
 2. **Downloader** — 이미지를 병렬 다운로드 (Referer 헤더 필수)
-3. **Image Processor** — Pillow 로 512×512 캔버스에 fit, 흰 배경 → 알파, GIF → APNG (300KB 제한에 맞춰 프레임 스트라이드 자동 조절)
+3. **Image Processor** — Pillow 로 512×512 캔버스에 업스케일 (Lanczos), 정적은 PNG, 애니메이션은 animated WebP (300KB 제한에 맞춰 quality·stride 자동 조절). `--remove-bg` 옵션 시 흰배경 → 알파
 4. **Pack Builder** — `signalstickers-client` 의 `LocalStickerPack` 으로 변환
 5. **Uploader** — Signal 서버에 업로드 → `pack_id` + `pack_key` 받아서 설치 링크 조립
 
 ## 제한 사항
 
-- 디시콘 원본은 **200×200 JPEG/GIF** 미리보기 화질이라 512×512 업스케일 시 약간 블러 발생 (Lanczos 리샘플링)
+- 디시콘 원본은 **200×200 JPEG/GIF** 미리보기 화질이라 512×512 업스케일 시 약간 블러 발생 (Lanczos 리샘플링). 원본보다 약 2.5배 확대돼서 Signal 표시 사이즈와 맞음.
 - 디시콘 비공개 / 삭제된 팩은 변환 불가
 - Signal 스티커 팩 최대 200 개 (디시콘은 보통 20~50 개라 문제 없음)
 - 스티커별 이모지 태그는 기본 `😀` placeholder. `--emoji-map` 또는 업로드 후 Signal Desktop 에서 편집

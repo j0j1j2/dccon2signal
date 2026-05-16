@@ -22,16 +22,19 @@ def build(pack: DcconPack, emoji_map: dict[str, str] | None = None) -> LocalStic
     signal_pack.title = pack.title
     signal_pack.author = pack.author
 
-    cover = Sticker()
-    cover.id = 0
-    cover.image_data = pack.cover_processed
-    signal_pack.cover = cover
-
     for idx, s in enumerate(processed):
         sticker = Sticker()
         sticker.id = idx
         sticker.emoji = (emoji_map or {}).get(str(s.sort), s.emoji)
         sticker.image_data = s.processed_bytes
         signal_pack._addsticker(sticker)
+
+    # The cover must use a DEDICATED slot id (len(stickers)) so it doesn't
+    # share a CDN upload slot with stickers[0]. Signal allocates
+    # nb_stickers_with_cover slots, so slot N exists when there are N stickers.
+    cover = Sticker()
+    cover.id = len(processed)
+    cover.image_data = pack.cover_processed
+    signal_pack.cover = cover
 
     return signal_pack

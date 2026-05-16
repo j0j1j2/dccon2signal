@@ -26,10 +26,10 @@ def _synth_white_border_png() -> bytes:
     return buf.getvalue()
 
 
-# After fit-to-512, the 200x200 image is centered at offset (156, 156).
-# Canvas (158,158) maps to source (2,2) -> within the 20px white border.
-_BORDER_PIXEL = (158, 158)
-# Canvas (256,256) is center -> within the red interior.
+# 200x200 source upscaled to 512x512: scale ≈ 2.56.
+# Source (2,2) (white border, src has 20px border) maps to canvas (~5, ~5).
+# Source (100,100) (red interior) maps to canvas (~256, ~256).
+_BORDER_PIXEL = (5, 5)
 _INTERIOR_PIXEL = (256, 256)
 
 
@@ -61,9 +61,9 @@ def test_process_static_keeps_background_when_disabled():
     assert border[3] == 255, f"with remove_bg=False, white border stays opaque, got {border}"
 
 
-def test_animated_gif_becomes_apng_under_limit(sample_animated_gif):
+def test_animated_gif_becomes_webp_under_limit(sample_animated_gif):
     out, ext = process_sticker_bytes(sample_animated_gif, source_ext="gif", remove_bg=True)
-    assert ext == "apng"
+    assert ext == "webp"
     img = _decode(out)
     assert getattr(img, "is_animated", False) is True
     assert img.size == (SIGNAL_SIZE, SIGNAL_SIZE)
@@ -102,4 +102,4 @@ def test_process_pack_populates_processed_fields(sample_static_png, sample_anima
     process_pack(pack)
     assert pack.cover_processed is not None
     assert pack.stickers[0].processed_bytes is not None
-    assert pack.stickers[0].processed_ext == "apng"
+    assert pack.stickers[0].processed_ext == "webp"
