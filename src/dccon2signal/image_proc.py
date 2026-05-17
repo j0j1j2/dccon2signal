@@ -139,15 +139,16 @@ def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) 
 def _encode_webp_under_limit(
     frames: list[Image.Image], durations: list[int]
 ) -> tuple[bytes, ProcessedExt]:
-    # Start quality at 70 — empirically the highest that fits 300KB for typical
-    # 29-frame DCcon GIFs upscaled to 512x512. Starting at 80 cost a wasted
-    # encode pass on nearly every sticker.
+    # Start at quality 80 — for short/simple stickers it fits and looks
+    # noticeably better. Most longer GIFs overflow and we fall back to 70
+    # (one wasted encode), but the visible upside on the ones that fit is
+    # worth that cost.
     for stride in (1, 2, 3, 4):
         sub_frames = frames[::stride]
         if not sub_frames:
             continue
         sub_durations = [sum(durations[i : i + stride]) for i in range(0, len(durations), stride)]
-        for quality in (70, 60, 50):
+        for quality in (80, 70, 60, 50):
             if len(sub_frames) == 1:
                 buf = BytesIO()
                 sub_frames[0].save(buf, format="WEBP", quality=quality, method=WEBP_METHOD)
