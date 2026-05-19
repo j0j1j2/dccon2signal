@@ -189,18 +189,27 @@ def _encode_webp_under_limit(
         ]
         return sub_frames, sub_durations
 
-    # Outer: quality (best to worst). Inner: stride (lowest first). The
-    # first quality-stride pair that fits wins, so high quality is always
-    # preferred and we only drop quality when no stride works at that q.
-    for quality in (90, 75, 55, 40):
-        for stride in candidate_strides:
-            sub = _sub(stride)
-            if sub is None:
-                break
-            sub_frames, sub_durations = sub
-            out = _encode_webp(sub_frames, sub_durations, quality)
+    # Outer: stride (lowest first → more frames → smoother). For each
+    # stride, probe at the lowest quality first; if even that doesn't fit
+    # we know nothing higher will either — skip to the next stride. When
+    # q=40 fits, attempt q=70 once; if that also fits, prefer it.
+    for stride in candidate_strides:
+        sub = _sub(stride)
+        if sub is None:
+            break
+        sub_frames, sub_durations = sub
+
+        probe = _encode_webp(sub_frames, sub_durations, 40)
+        if len(probe) > SIGNAL_MAX_BYTES:
+            continue  # this stride is hopeless at any quality
+
+        # Headroom test: q=70 is ~40% bigger than q=40 in practice. If the
+        # probe is already past 70% of budget, q=70 will definitely overflow.
+        if len(probe) <= SIGNAL_MAX_BYTES * 0.7:
+            out = _encode_webp(sub_frames, sub_durations, 70)
             if len(out) <= SIGNAL_MAX_BYTES:
                 return out, "webp"
+        return probe, "webp"
 
     # Last resort: static PNG of frame 0 (uses PNG quantize fallback for size).
     return _shrink_png_under_limit(frames[0]), "png"
