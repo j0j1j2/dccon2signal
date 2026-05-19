@@ -3,6 +3,7 @@ from io import BytesIO
 from PIL import Image
 
 from dccon2signal.image_proc import (
+    ANIM_SIZE,
     SIGNAL_MAX_BYTES,
     SIGNAL_SIZE,
     process_pack,
@@ -66,7 +67,7 @@ def test_animated_gif_becomes_webp_under_limit(sample_animated_gif):
     assert ext == "webp"
     img = _decode(out)
     assert getattr(img, "is_animated", False) is True
-    assert img.size == (SIGNAL_SIZE, SIGNAL_SIZE)
+    assert img.size == (ANIM_SIZE, ANIM_SIZE)
     assert len(out) <= SIGNAL_MAX_BYTES
 
 

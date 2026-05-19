@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 Image.MAX_IMAGE_PIXELS = None
 
 SIGNAL_SIZE = 512
+# Animated stickers use a smaller canvas than static to make room for more
+# frames inside the 300KB per-sticker budget. 256×256 ≈ chat-display size
+# on Signal mobile (~200-300px), so 512×512 is significantly oversized for
+# its display target — animated stickers fit more frames at higher quality
+# in this smaller canvas with no perceived loss.
+ANIM_SIZE = 256
 # Signal's per-sticker limit is "300 KB" — using the SI definition (300,000 bytes)
 # to stay safely under the server-side check.
 SIGNAL_MAX_BYTES = 300_000
@@ -99,17 +105,16 @@ def process_sticker_bytes(
 
 
 def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, ProcessedExt]:
-    # Animated stickers go out as animated WebP, which compresses ~5× better
-    # than APNG for cartoon-like content. This lets us keep the full 512×512
-    # canvas (matching static stickers) AND all frames within Signal's 300KB
-    # per-sticker budget.
+    # Animated stickers go out as animated WebP at ANIM_SIZE (smaller than
+    # SIGNAL_SIZE) — gives room for many more frames at high quality within
+    # the 300KB budget. Signal clients downscale stickers in chat anyway.
     raw_frames: list[Image.Image] = []
     durations: list[int] = []
     for frame in ImageSequence.Iterator(img):
         f = frame.convert("RGBA")
         if remove_bg:
             f = _remove_white_bg(f)
-        raw_frames.append(_fit_to_canvas(f, SIGNAL_SIZE))
+        raw_frames.append(_fit_to_canvas(f, ANIM_SIZE))
         durations.append(int(frame.info.get("duration", 100)))
 
     return _encode_webp_under_limit(raw_frames, durations)
@@ -160,13 +165,12 @@ def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) 
 def _encode_webp_under_limit(
     frames: list[Image.Image], durations: list[int]
 ) -> tuple[bytes, ProcessedExt]:
-    # Strategy: prioritise quality over fps. Try a high quality first at
-    # the smallest viable stride; if it doesn't fit, escalate stride
-    # (= drop frames) before lowering quality. Fps decreases as stride
-    # grows, but the user explicitly asked for higher quality at the
-    # expense of frame rate. Total duration is still preserved by
-    # consolidating per-frame durations across stride.
-    _MAX_FRAMES_TARGET = 40
+    # Strategy with ANIM_SIZE=256: each frame at q=70 is ~3KB, so a 300KB
+    # budget holds ~80 frames. _MAX_FRAMES_TARGET=70 keeps the initial
+    # stride small enough to try stride=1 (= every source frame, max fps)
+    # whenever the source is ≤70 frames. Quality search per stride probes
+    # at q=40, then climbs to higher qualities only when there's headroom.
+    _MAX_FRAMES_TARGET = 70
     initial_stride = max(1, len(frames) // _MAX_FRAMES_TARGET)
     candidate_strides = sorted(
         {
@@ -191,8 +195,9 @@ def _encode_webp_under_limit(
 
     # Outer: stride (lowest first → more frames → smoother). For each
     # stride, probe at the lowest quality first; if even that doesn't fit
-    # we know nothing higher will either — skip to the next stride. When
-    # q=40 fits, attempt q=70 once; if that also fits, prefer it.
+    # skip ahead. Otherwise climb the quality ladder, returning the
+    # highest that fits. Headroom checks short-circuit obviously-doomed
+    # upgrades so we don't waste encode passes.
     for stride in candidate_strides:
         sub = _sub(stride)
         if sub is None:
@@ -201,12 +206,14 @@ def _encode_webp_under_limit(
 
         probe = _encode_webp(sub_frames, sub_durations, 40)
         if len(probe) > SIGNAL_MAX_BYTES:
-            continue  # this stride is hopeless at any quality
+            continue
 
-        # Headroom test: q=70 is ~40% bigger than q=40 in practice. If the
-        # probe is already past 70% of budget, q=70 will definitely overflow.
-        if len(probe) <= SIGNAL_MAX_BYTES * 0.7:
-            out = _encode_webp(sub_frames, sub_durations, 70)
+        # Each quality step is roughly +15-25% file size. Try the highest
+        # quality whose ratio to probe still fits.
+        for quality, headroom_threshold in ((90, 0.35), (75, 0.5), (60, 0.7)):
+            if len(probe) > SIGNAL_MAX_BYTES * headroom_threshold:
+                continue
+            out = _encode_webp(sub_frames, sub_durations, quality)
             if len(out) <= SIGNAL_MAX_BYTES:
                 return out, "webp"
         return probe, "webp"
