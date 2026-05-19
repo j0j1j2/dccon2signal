@@ -115,10 +115,10 @@ def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, Proc
     return _encode_webp_under_limit(raw_frames, durations)
 
 
-# WebP encoder method: 0 = fastest, 6 = best compression. method=2 cuts
-# encoding time ~50% vs method=4 while keeping files comfortably under 300KB
-# for typical DCcon animated frames.
-WEBP_METHOD = 2
+# WebP encoder method: 0 = fastest, 6 = best compression. method=4 spends
+# more time searching for an optimal encoding (~5-10% smaller files at the
+# same quality) so we can run the quality ladder higher.
+WEBP_METHOD = 4
 
 # Per-frame display duration in the output animation. ~60fps target makes
 # stickers look smooth on Signal even after stride-based frame dropping —
@@ -170,7 +170,7 @@ def _encode_webp_under_limit(
         # passed in from the source GIF are discarded — see
         # WEBP_FRAME_DURATION_MS comment for rationale).
         sub_durations = [WEBP_FRAME_DURATION_MS] * len(sub_frames)
-        for quality in (80, 70, 60, 50):
+        for quality in (95, 90, 80, 70, 60, 50):
             if len(sub_frames) == 1:
                 buf = BytesIO()
                 sub_frames[0].save(buf, format="WEBP", quality=quality, method=WEBP_METHOD)
