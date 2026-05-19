@@ -115,20 +115,19 @@ def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, Proc
     return _encode_webp_under_limit(raw_frames, durations)
 
 
-# WebP encoder method: 0 = fastest, 6 = best compression. method=4 spends
-# more time searching for an optimal encoding (~5-10% smaller files at the
-# same quality) so we can run the quality ladder higher.
-WEBP_METHOD = 4
+# WebP encoder method: 0 = fastest, 6 = best compression. method=2 keeps
+# per-encode time under a second for typical DCcon GIFs; method=4 would
+# trim ~5-10% off file sizes but multiplies pack-conversion time by ~2x
+# given we encode multiple times per sticker for quality/stride search.
+WEBP_METHOD = 2
 
-# Minimum per-frame display duration in the output animation.
-#
-# DCcon GIFs commonly declare 30ms per frame (~33fps), but historically
-# browsers and the DCInside viewer clamp GIF playback at 100ms per frame
-# (10fps) when delays are very short. Users see the source "at GIF speed"
-# (clamped). Our WebP plays back the declared 30ms honestly, which is
-# ~3× faster than users expect. Match the clamp so the WebP animation
-# feels like the source.
-MIN_FRAME_DURATION_MS = 100
+# Minimum per-frame display duration. 33ms ≈ 30fps cap. The fps perceived
+# in playback is `1000 / max_kept_frame_duration` — so to feel like 30fps
+# we need both this minimum AND enough kept frames that no stride forces
+# us to consolidate multiple source frames into one held output frame.
+# See _encode_webp_under_limit for the stride-1-first strategy that makes
+# 30fps actually achievable on the source frame counts we can fit.
+MIN_FRAME_DURATION_MS = 33
 
 
 def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) -> bytes:
@@ -161,35 +160,59 @@ def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) 
 def _encode_webp_under_limit(
     frames: list[Image.Image], durations: list[int]
 ) -> tuple[bytes, ProcessedExt]:
-    # With kmin=1 each frame is a full key frame, so file size scales linearly
-    # with frame count. Empirically ~15 frames @ 512×512 fits 300KB at q=80.
-    # Pre-compute an initial stride so we don't waste 3-4 encode passes that
-    # are mathematically doomed.
-    initial_stride = max(1, (len(frames) + 17) // 18)
+    # Strategy: keep every source frame when feasible (= max perceived fps,
+    # ~30fps if MIN_FRAME_DURATION_MS=33). Long source GIFs can't fit ~50+
+    # frames in 300KB even at q=40, so skip directly to a stride that yields
+    # a frame count we have any hope of encoding. Per-frame duration is
+    # consolidated across stride so total duration matches source.
+    _MAX_FRAMES_TARGET = 40
+    initial_stride = max(1, len(frames) // _MAX_FRAMES_TARGET)
 
-    for stride in (initial_stride, initial_stride * 2, initial_stride * 3, initial_stride * 4):
+    candidate_strides = sorted(
+        {
+            initial_stride,
+            initial_stride * 2,
+            initial_stride * 3,
+            initial_stride * 4,
+            initial_stride * 6,
+            initial_stride * 9,
+        }
+    )
+    for stride in candidate_strides:
         sub_frames = frames[::stride]
-        if not sub_frames:
-            continue
+        if len(sub_frames) < 2:
+            # Either we ran out of frames, or input was a single frame.
+            break
         # Per kept frame: sum the source-frame durations it replaces, with
-        # each source frame contributing at least MIN_FRAME_DURATION_MS.
-        # This both clamps fast-declared GIFs to the browser-perceived
-        # speed AND compensates for stride frame-dropping by extending each
-        # kept frame's display time. Result: total animation duration
-        # matches the source's browser-clamped total within ~1%.
+        # each source frame clamped to at least MIN_FRAME_DURATION_MS. This
+        # both enforces the fps ceiling and preserves total duration across
+        # stride frame-dropping.
         sub_durations = [
             sum(max(d, MIN_FRAME_DURATION_MS) for d in durations[i : i + stride])
             for i in range(0, len(durations), stride)
         ]
-        for quality in (95, 90, 80, 70, 60, 50):
-            if len(sub_frames) == 1:
-                buf = BytesIO()
-                sub_frames[0].save(buf, format="WEBP", quality=quality, method=WEBP_METHOD)
-                out = buf.getvalue()
-            else:
-                out = _encode_webp(sub_frames, sub_durations, quality)
-            if len(out) <= SIGNAL_MAX_BYTES:
-                return out, "webp"
+
+        # Single optimistic attempt at a balanced quality. Tight pass-or-skip
+        # logic — we don't try to find the BEST fitting quality because
+        # encoding a high-frame WebP costs ~1s and accumulates fast across
+        # the pack. q=70 is the sweet spot: visually clean, usually fits
+        # once the stride heuristic has tightened frame count.
+        out = _encode_webp(sub_frames, sub_durations, 70)
+        if len(out) <= SIGNAL_MAX_BYTES:
+            return out, "webp"
+
+        # Fast fallback at lower quality.
+        out = _encode_webp(sub_frames, sub_durations, 50)
+        if len(out) <= SIGNAL_MAX_BYTES:
+            return out, "webp"
+
+        # Still over budget — skip to the next stride. Last-resort q=40
+        # is tried only when stride escalation has reached its end.
+        if stride < candidate_strides[-1]:
+            continue
+        out = _encode_webp(sub_frames, sub_durations, 40)
+        if len(out) <= SIGNAL_MAX_BYTES:
+            return out, "webp"
 
     # Last resort: static PNG of frame 0 (uses PNG quantize fallback for size).
     return _shrink_png_under_limit(frames[0]), "png"
