@@ -27,6 +27,7 @@ class StatusReporter:
         self._clock = clock
         self._last_sent_at = -1e9
         self._last_text: str | None = None
+        self._last_stage: Stage | None = None
 
     async def update(
         self,
@@ -40,7 +41,11 @@ class StatusReporter:
 
         now = self._clock()
         terminal = stage in (Stage.DONE, Stage.FAILED)
-        if not terminal and now - self._last_sent_at < self._min_interval:
+        stage_changed = stage != self._last_stage
+        # Throttle only applies to repeated updates WITHIN a stage (progress
+        # ticks). Stage transitions always flush — otherwise SAVING/UPLOADING
+        # get dropped because they fire immediately after a PROCESSING update.
+        if not terminal and not stage_changed and now - self._last_sent_at < self._min_interval:
             return
 
         try:
@@ -55,3 +60,4 @@ class StatusReporter:
 
         self._last_sent_at = now
         self._last_text = text
+        self._last_stage = stage
