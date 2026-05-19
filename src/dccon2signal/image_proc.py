@@ -120,6 +120,16 @@ def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, Proc
 # same quality) so we can run the quality ladder higher.
 WEBP_METHOD = 4
 
+# Minimum per-frame display duration in the output animation.
+#
+# DCcon GIFs commonly declare 30ms per frame (~33fps), but historically
+# browsers and the DCInside viewer clamp GIF playback at 100ms per frame
+# (10fps) when delays are very short. Users see the source "at GIF speed"
+# (clamped). Our WebP plays back the declared 30ms honestly, which is
+# ~3× faster than users expect. Match the clamp so the WebP animation
+# feels like the source.
+MIN_FRAME_DURATION_MS = 100
+
 
 def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) -> bytes:
     buf = BytesIO()
@@ -161,11 +171,16 @@ def _encode_webp_under_limit(
         sub_frames = frames[::stride]
         if not sub_frames:
             continue
-        # Preserve the source animation's total duration: sum the durations
-        # of every source frame that maps to this output frame. With stride
-        # the kept frames are shown longer, which is choppier than the
-        # source but plays back at the correct speed.
-        sub_durations = [sum(durations[i : i + stride]) for i in range(0, len(durations), stride)]
+        # Per kept frame: sum the source-frame durations it replaces, with
+        # each source frame contributing at least MIN_FRAME_DURATION_MS.
+        # This both clamps fast-declared GIFs to the browser-perceived
+        # speed AND compensates for stride frame-dropping by extending each
+        # kept frame's display time. Result: total animation duration
+        # matches the source's browser-clamped total within ~1%.
+        sub_durations = [
+            sum(max(d, MIN_FRAME_DURATION_MS) for d in durations[i : i + stride])
+            for i in range(0, len(durations), stride)
+        ]
         for quality in (95, 90, 80, 70, 60, 50):
             if len(sub_frames) == 1:
                 buf = BytesIO()
