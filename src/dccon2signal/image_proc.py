@@ -120,11 +120,6 @@ def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, Proc
 # same quality) so we can run the quality ladder higher.
 WEBP_METHOD = 4
 
-# Per-frame display duration in the output animation. ~60fps target makes
-# stickers look smooth on Signal even after stride-based frame dropping —
-# accepting that the animation plays faster than the original GIF timing.
-WEBP_FRAME_DURATION_MS = 17
-
 
 def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) -> bytes:
     buf = BytesIO()
@@ -166,10 +161,11 @@ def _encode_webp_under_limit(
         sub_frames = frames[::stride]
         if not sub_frames:
             continue
-        # Fixed 60fps-target duration per output frame (the `durations`
-        # passed in from the source GIF are discarded — see
-        # WEBP_FRAME_DURATION_MS comment for rationale).
-        sub_durations = [WEBP_FRAME_DURATION_MS] * len(sub_frames)
+        # Preserve the source animation's total duration: sum the durations
+        # of every source frame that maps to this output frame. With stride
+        # the kept frames are shown longer, which is choppier than the
+        # source but plays back at the correct speed.
+        sub_durations = [sum(durations[i : i + stride]) for i in range(0, len(durations), stride)]
         for quality in (95, 90, 80, 70, 60, 50):
             if len(sub_frames) == 1:
                 buf = BytesIO()
