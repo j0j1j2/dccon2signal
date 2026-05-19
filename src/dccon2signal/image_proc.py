@@ -160,14 +160,14 @@ def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) 
 def _encode_webp_under_limit(
     frames: list[Image.Image], durations: list[int]
 ) -> tuple[bytes, ProcessedExt]:
-    # Strategy: keep every source frame when feasible (= max perceived fps,
-    # ~30fps if MIN_FRAME_DURATION_MS=33). Long source GIFs can't fit ~50+
-    # frames in 300KB even at q=40, so skip directly to a stride that yields
-    # a frame count we have any hope of encoding. Per-frame duration is
-    # consolidated across stride so total duration matches source.
+    # Strategy: prioritise quality over fps. Try a high quality first at
+    # the smallest viable stride; if it doesn't fit, escalate stride
+    # (= drop frames) before lowering quality. Fps decreases as stride
+    # grows, but the user explicitly asked for higher quality at the
+    # expense of frame rate. Total duration is still preserved by
+    # consolidating per-frame durations across stride.
     _MAX_FRAMES_TARGET = 40
     initial_stride = max(1, len(frames) // _MAX_FRAMES_TARGET)
-
     candidate_strides = sorted(
         {
             initial_stride,
@@ -178,41 +178,29 @@ def _encode_webp_under_limit(
             initial_stride * 9,
         }
     )
-    for stride in candidate_strides:
+
+    def _sub(stride: int) -> tuple[list[Image.Image], list[int]] | None:
         sub_frames = frames[::stride]
         if len(sub_frames) < 2:
-            # Either we ran out of frames, or input was a single frame.
-            break
-        # Per kept frame: sum the source-frame durations it replaces, with
-        # each source frame clamped to at least MIN_FRAME_DURATION_MS. This
-        # both enforces the fps ceiling and preserves total duration across
-        # stride frame-dropping.
+            return None
         sub_durations = [
             sum(max(d, MIN_FRAME_DURATION_MS) for d in durations[i : i + stride])
             for i in range(0, len(durations), stride)
         ]
+        return sub_frames, sub_durations
 
-        # Single optimistic attempt at a balanced quality. Tight pass-or-skip
-        # logic — we don't try to find the BEST fitting quality because
-        # encoding a high-frame WebP costs ~1s and accumulates fast across
-        # the pack. q=70 is the sweet spot: visually clean, usually fits
-        # once the stride heuristic has tightened frame count.
-        out = _encode_webp(sub_frames, sub_durations, 70)
-        if len(out) <= SIGNAL_MAX_BYTES:
-            return out, "webp"
-
-        # Fast fallback at lower quality.
-        out = _encode_webp(sub_frames, sub_durations, 50)
-        if len(out) <= SIGNAL_MAX_BYTES:
-            return out, "webp"
-
-        # Still over budget — skip to the next stride. Last-resort q=40
-        # is tried only when stride escalation has reached its end.
-        if stride < candidate_strides[-1]:
-            continue
-        out = _encode_webp(sub_frames, sub_durations, 40)
-        if len(out) <= SIGNAL_MAX_BYTES:
-            return out, "webp"
+    # Outer: quality (best to worst). Inner: stride (lowest first). The
+    # first quality-stride pair that fits wins, so high quality is always
+    # preferred and we only drop quality when no stride works at that q.
+    for quality in (90, 75, 55, 40):
+        for stride in candidate_strides:
+            sub = _sub(stride)
+            if sub is None:
+                break
+            sub_frames, sub_durations = sub
+            out = _encode_webp(sub_frames, sub_durations, quality)
+            if len(out) <= SIGNAL_MAX_BYTES:
+                return out, "webp"
 
     # Last resort: static PNG of frame 0 (uses PNG quantize fallback for size).
     return _shrink_png_under_limit(frames[0]), "png"
