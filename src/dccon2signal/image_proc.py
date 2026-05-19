@@ -120,6 +120,11 @@ def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, Proc
 # for typical DCcon animated frames.
 WEBP_METHOD = 2
 
+# Per-frame display duration in the output animation. ~60fps target makes
+# stickers look smooth on Signal even after stride-based frame dropping —
+# accepting that the animation plays faster than the original GIF timing.
+WEBP_FRAME_DURATION_MS = 17
+
 
 def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) -> bytes:
     buf = BytesIO()
@@ -132,6 +137,18 @@ def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) 
         loop=0,
         quality=quality,
         method=WEBP_METHOD,
+        # Force every frame to be a key frame (kmin=kmax=1). Without this
+        # libwebp emits sub-frame diffs (variable-sized rectangles with
+        # mixed alpha/blend modes), which Glide on Android sometimes
+        # refuses to animate, rendering as static instead. With key-frames
+        # only, each frame is a full 512×512 RGBA image — bigger files
+        # but rock-solid compatibility across Signal clients.
+        kmin=1,
+        kmax=1,
+        minimize_size=False,
+        allow_mixed=False,
+        lossless=False,
+        background=(0, 0, 0, 0),
     )
     return buf.getvalue()
 
@@ -139,15 +156,20 @@ def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) 
 def _encode_webp_under_limit(
     frames: list[Image.Image], durations: list[int]
 ) -> tuple[bytes, ProcessedExt]:
-    # Start at quality 80 — for short/simple stickers it fits and looks
-    # noticeably better. Most longer GIFs overflow and we fall back to 70
-    # (one wasted encode), but the visible upside on the ones that fit is
-    # worth that cost.
-    for stride in (1, 2, 3, 4):
+    # With kmin=1 each frame is a full key frame, so file size scales linearly
+    # with frame count. Empirically ~15 frames @ 512×512 fits 300KB at q=80.
+    # Pre-compute an initial stride so we don't waste 3-4 encode passes that
+    # are mathematically doomed.
+    initial_stride = max(1, (len(frames) + 17) // 18)
+
+    for stride in (initial_stride, initial_stride * 2, initial_stride * 3, initial_stride * 4):
         sub_frames = frames[::stride]
         if not sub_frames:
             continue
-        sub_durations = [sum(durations[i : i + stride]) for i in range(0, len(durations), stride)]
+        # Fixed 60fps-target duration per output frame (the `durations`
+        # passed in from the source GIF are discarded — see
+        # WEBP_FRAME_DURATION_MS comment for rationale).
+        sub_durations = [WEBP_FRAME_DURATION_MS] * len(sub_frames)
         for quality in (80, 70, 60, 50):
             if len(sub_frames) == 1:
                 buf = BytesIO()
