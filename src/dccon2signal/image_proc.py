@@ -1,4 +1,9 @@
+import contextlib
 import logging
+import os
+import shutil
+import subprocess
+import tempfile
 from collections.abc import Awaitable, Callable
 from io import BytesIO
 
@@ -7,6 +12,13 @@ from PIL import Image, ImageSequence
 from dccon2signal.models import DcconPack, ImageExt, ProcessedExt
 
 logger = logging.getLogger(__name__)
+
+# Google's reference GIF→animated-WebP encoder. Its output sets the VP8X
+# alpha flag and uses canonical sub-frame structure, which Signal Android's
+# decoder animates correctly — Pillow's encoder drops the alpha flag for
+# opaque content and Android then renders the sticker as a static first
+# frame. Prefer gif2webp when present; fall back to Pillow otherwise.
+GIF2WEBP_BIN = shutil.which("gif2webp")
 
 # Some DCcon GIFs carry garbage dimension values in a stray frame header and
 # trigger Pillow's decompression-bomb safety check (verified: pixel data is
@@ -17,12 +29,10 @@ logger = logging.getLogger(__name__)
 Image.MAX_IMAGE_PIXELS = None
 
 SIGNAL_SIZE = 512
-# Animated stickers use a smaller canvas than static to make room for more
-# frames inside the 300KB per-sticker budget. 256×256 ≈ chat-display size
-# on Signal mobile (~200-300px), so 512×512 is significantly oversized for
-# its display target — animated stickers fit more frames at higher quality
-# in this smaller canvas with no perceived loss.
-ANIM_SIZE = 256
+# Animated stickers render at full 512×512 — gif2webp's sub-frame
+# compression keeps even high frame counts well under the 300KB budget,
+# so the smaller canvas the Pillow path needed is no longer required.
+ANIM_SIZE = 512
 # Signal's per-sticker limit is "300 KB" — using the SI definition (300,000 bytes)
 # to stay safely under the server-side check.
 SIGNAL_MAX_BYTES = 300_000
@@ -105,9 +115,7 @@ def process_sticker_bytes(
 
 
 def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, ProcessedExt]:
-    # Animated stickers go out as animated WebP at ANIM_SIZE (smaller than
-    # SIGNAL_SIZE) — gives room for many more frames at high quality within
-    # the 300KB budget. Signal clients downscale stickers in chat anyway.
+    # Decode every source frame to a fitted RGBA image once.
     raw_frames: list[Image.Image] = []
     durations: list[int] = []
     for frame in ImageSequence.Iterator(img):
@@ -117,7 +125,89 @@ def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, Proc
         raw_frames.append(_fit_to_canvas(f, ANIM_SIZE))
         durations.append(int(frame.info.get("duration", 100)))
 
+    if GIF2WEBP_BIN is not None:
+        out = _encode_animated_gif2webp(raw_frames, durations)
+        if out is not None:
+            return out, "webp"
+        logger.warning("gif2webp encoding failed; falling back to Pillow WebP")
+
     return _encode_webp_under_limit(raw_frames, durations)
+
+
+def _strided_durations(durations: list[int], stride: int) -> list[int]:
+    # Each kept frame's duration = sum of source-frame durations it replaces,
+    # with each source frame clamped to MIN_FRAME_DURATION_MS. Preserves total
+    # playback duration under stride and caps fps at ~30.
+    return [
+        sum(max(d, MIN_FRAME_DURATION_MS) for d in durations[i : i + stride])
+        for i in range(0, len(durations), stride)
+    ]
+
+
+def _frames_to_gif_bytes(frames: list[Image.Image], durations: list[int]) -> bytes:
+    buf = BytesIO()
+    frames[0].save(
+        buf,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        duration=durations,
+        loop=0,
+        disposal=2,
+    )
+    return buf.getvalue()
+
+
+def _run_gif2webp(gif_bytes: bytes, quality: int) -> bytes | None:
+    assert GIF2WEBP_BIN is not None
+    gif_path = webp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as gf:
+            gf.write(gif_bytes)
+            gif_path = gf.name
+        webp_path = gif_path + ".webp"
+        result = subprocess.run(
+            [GIF2WEBP_BIN, "-lossy", "-q", str(quality), "-m", "4", gif_path, "-o", webp_path],
+            capture_output=True,
+            timeout=120,
+        )
+        if result.returncode != 0 or not os.path.exists(webp_path):
+            logger.warning("gif2webp returned %s: %s", result.returncode, result.stderr[:200])
+            return None
+        with open(webp_path, "rb") as f:
+            return f.read()
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("gif2webp invocation failed: %s", e)
+        return None
+    finally:
+        for p in (gif_path, webp_path):
+            if p and os.path.exists(p):
+                with contextlib.suppress(OSError):
+                    os.unlink(p)
+
+
+def _encode_animated_gif2webp(frames: list[Image.Image], durations: list[int]) -> bytes | None:
+    # gif2webp reads a GIF, so we build a strided intermediate GIF (the
+    # DCcon source is already ≤256-color GIF, so re-palettizing costs little)
+    # and encode it. Same stride/quality search as the Pillow path, but
+    # gif2webp's sub-frame compression fits 512×512 at high quality.
+    _MAX_FRAMES_TARGET = 60
+    initial_stride = max(1, len(frames) // _MAX_FRAMES_TARGET)
+    candidate_strides = sorted(
+        {initial_stride, initial_stride * 2, initial_stride * 3, initial_stride * 4}
+    )
+    for stride in candidate_strides:
+        sub_frames = frames[::stride]
+        if len(sub_frames) < 2:
+            break
+        gif_bytes = _frames_to_gif_bytes(sub_frames, _strided_durations(durations, stride))
+        for quality in (85, 70, 55, 40):
+            out = _run_gif2webp(gif_bytes, quality)
+            if out is None:
+                break  # gif2webp broken — bail to Pillow fallback
+            if len(out) <= SIGNAL_MAX_BYTES:
+                return out
+    return None
 
 
 # WebP encoder method: 0 = fastest, 6 = best compression. method=2 keeps

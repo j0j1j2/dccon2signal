@@ -17,6 +17,17 @@ uv sync
 
 `uv` 가 없으면: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
+**권장: `gif2webp` 설치** (Google libwebp-tools). 애니메이션 스티커를 Signal Android 에서도 제대로 재생되는 형식으로 인코딩합니다. 없으면 Pillow 로 폴백되지만 **Android 에서 애니메이션이 첫 프레임에 멈출 수 있음**.
+
+```bash
+# macOS
+brew install webp
+# Debian/Ubuntu
+sudo apt install webp
+# Arch
+sudo pacman -S libwebp
+```
+
 ## 빠른 시작 — 변환만 (인증 불필요)
 
 ```bash
