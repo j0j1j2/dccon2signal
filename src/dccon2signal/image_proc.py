@@ -19,13 +19,16 @@ Image.MAX_IMAGE_PIXELS = None
 SIGNAL_SIZE = 512
 # Animated stickers go out as palette APNG (Signal animates APNG, not
 # animated WebP — confirmed empirically against signalstickers.org
-# community packs). APNG palette compression is dominated by colour count,
-# not pixel area, so the canvas size barely affects file size; 320×320 is
-# a comfortable middle that matches the official Signal animated packs.
-ANIM_SIZE = 320
-# Signal's per-sticker limit is "300 KB" — using the SI definition (300,000 bytes)
-# to stay safely under the server-side check.
-SIGNAL_MAX_BYTES = 300_000
+# community packs). 256×256 is the smallest canvas that still matches
+# Signal's chat display size; smaller pixel area buys headroom to keep
+# more frames (= higher fps) at the 300KB-per-sticker budget.
+ANIM_SIZE = 256
+# Signal's per-sticker limit is documented as "300 KB" but server-side it
+# means 300 KiB (= 300 * 1024 = 307,200 bytes). Confirmed by surveying the
+# community Gojill-Animated pack: production stickers up to 304,561 bytes
+# (297.4 KiB) are accepted and rendered. Use 307,200 as the ceiling so we
+# don't burn ~7KB of budget we actually have.
+SIGNAL_MAX_BYTES = 307_200
 WHITE_THRESHOLD = 240
 
 
@@ -60,6 +63,24 @@ def _fit_to_canvas(img: Image.Image, target_size: int) -> Image.Image:
 
 def _fit_512(img: Image.Image) -> Image.Image:
     return _fit_to_canvas(img, SIGNAL_SIZE)
+
+
+def _fit_to_canvas_nearest(img: Image.Image, target_size: int) -> Image.Image:
+    """Like _fit_to_canvas but uses NEAREST resampling so the result has
+    the same set of colours as the source. Used for animated stickers
+    where palette stability matters more than smooth interpolation."""
+    img = img.convert("RGBA")
+    scale = target_size / max(img.width, img.height)
+    new_w = round(img.width * scale)
+    new_h = round(img.height * scale)
+    resized = img.resize((new_w, new_h), Image.Resampling.NEAREST)
+    if new_w == target_size and new_h == target_size:
+        return resized
+    canvas = Image.new("RGBA", (target_size, target_size), (0, 0, 0, 0))
+    ox = (target_size - new_w) // 2
+    oy = (target_size - new_h) // 2
+    canvas.paste(resized, (ox, oy), resized)
+    return canvas
 
 
 def _encode_png(img: Image.Image) -> bytes:
@@ -105,14 +126,17 @@ def process_sticker_bytes(
 
 
 def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, ProcessedExt]:
-    # Decode every source frame to a fitted RGBA image once.
+    # Decode every source frame to a fitted RGBA image once. Upscale via
+    # NEAREST: it preserves the source palette exactly (each pixel
+    # duplicated, no interpolated colours) — Lanczos would invent
+    # thousands of new colours and double the encoded palette-APNG size.
     raw_frames: list[Image.Image] = []
     durations: list[int] = []
     for frame in ImageSequence.Iterator(img):
         f = frame.convert("RGBA")
         if remove_bg:
             f = _remove_white_bg(f)
-        raw_frames.append(_fit_to_canvas(f, ANIM_SIZE))
+        raw_frames.append(_fit_to_canvas_nearest(f, ANIM_SIZE))
         durations.append(int(frame.info.get("duration", 100)))
 
     # Signal animates APNG, not animated WebP — empirically confirmed against
@@ -184,11 +208,12 @@ def _encode_apng(frames: list[Image.Image], durations: list[int], colors: int) -
 
 
 def _encode_animated_apng(frames: list[Image.Image], durations: list[int]) -> bytes | None:
-    # APNG palette compression: ~7-10KB per frame at 64 colors → 300KB ≈ 35
-    # frames. Stride aggressively for long source GIFs; degrade palette
-    # depth only when stride alone can't fit (preserve frame smoothness
-    # before sacrificing colors).
-    _MAX_FRAMES_TARGET = 35
+    # Aim for smoothness over palette depth: pick the smallest stride
+    # that fits 300KB at any colour count from 128 down to 16. For long
+    # DCcon GIFs (100+ frames) this lands at stride=2 / 16-colour palette
+    # ≈ 15fps; shorter sources sit at stride=1 with much higher colour
+    # counts.
+    _MAX_FRAMES_TARGET = 60
     initial_stride = max(1, len(frames) // _MAX_FRAMES_TARGET)
     candidate_strides = sorted(
         {initial_stride, initial_stride * 2, initial_stride * 3, initial_stride * 4}
