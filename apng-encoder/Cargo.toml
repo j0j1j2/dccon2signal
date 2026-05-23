@@ -1,0 +1,19 @@
+[package]
+name = "apng-encoder"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "dccon-apng"
+path = "src/main.rs"
+
+[dependencies]
+gif = "0.13"
+png = "0.18"
+imagequant = "4"
+oxipng = { version = "9", default-features = false, features = ["parallel", "zopfli"] }
+anyhow = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

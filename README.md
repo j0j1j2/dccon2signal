@@ -17,16 +17,14 @@ uv sync
 
 `uv` 가 없으면: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-**필수: `apngasm` + `oxipng` 설치.** 애니메이션 스티커를 Signal 이 재생하는 APNG 포맷으로 인코딩합니다. 둘 다 없으면 변환이 실패합니다.
+**필수: Rust 인코더 빌드.** 애니메이션 스티커를 Signal 이 재생하는 APNG 포맷으로 인코딩하는 자체 Rust 바이너리 `dccon-apng` 를 사용합니다.
 
 ```bash
-# macOS
-brew install apngasm oxipng
-# Debian/Ubuntu 22.04+
-sudo apt install apngasm oxipng
-# Arch
-sudo pacman -S apngasm oxipng
+# Rust 가 없으면: https://rustup.rs
+cd apng-encoder && cargo build --release
 ```
+
+`target/release/dccon-apng` 가 만들어지면 Python 쪽에서 자동으로 찾아 사용합니다. PATH 어디든 두려면 `DCCON_APNG_BINARY=/path/to/dccon-apng` 환경변수로 지정할 수 있어요.
 
 ## 빠른 시작 — 변환만 (인증 불필요)
 
