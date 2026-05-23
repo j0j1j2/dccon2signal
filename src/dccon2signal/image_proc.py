@@ -1,9 +1,4 @@
-import contextlib
 import logging
-import os
-import shutil
-import subprocess
-import tempfile
 from collections.abc import Awaitable, Callable
 from io import BytesIO
 
@@ -12,13 +7,6 @@ from PIL import Image, ImageSequence
 from dccon2signal.models import DcconPack, ImageExt, ProcessedExt
 
 logger = logging.getLogger(__name__)
-
-# Google's reference GIF→animated-WebP encoder. Its output sets the VP8X
-# alpha flag and uses canonical sub-frame structure, which Signal Android's
-# decoder animates correctly — Pillow's encoder drops the alpha flag for
-# opaque content and Android then renders the sticker as a static first
-# frame. Prefer gif2webp when present; fall back to Pillow otherwise.
-GIF2WEBP_BIN = shutil.which("gif2webp")
 
 # Some DCcon GIFs carry garbage dimension values in a stray frame header and
 # trigger Pillow's decompression-bomb safety check (verified: pixel data is
@@ -29,10 +17,12 @@ GIF2WEBP_BIN = shutil.which("gif2webp")
 Image.MAX_IMAGE_PIXELS = None
 
 SIGNAL_SIZE = 512
-# Animated stickers render at full 512×512 — gif2webp's sub-frame
-# compression keeps even high frame counts well under the 300KB budget,
-# so the smaller canvas the Pillow path needed is no longer required.
-ANIM_SIZE = 512
+# Animated stickers go out as palette APNG (Signal animates APNG, not
+# animated WebP — confirmed empirically against signalstickers.org
+# community packs). APNG palette compression is dominated by colour count,
+# not pixel area, so the canvas size barely affects file size; 320×320 is
+# a comfortable middle that matches the official Signal animated packs.
+ANIM_SIZE = 320
 # Signal's per-sticker limit is "300 KB" — using the SI definition (300,000 bytes)
 # to stay safely under the server-side check.
 SIGNAL_MAX_BYTES = 300_000
@@ -125,13 +115,19 @@ def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, Proc
         raw_frames.append(_fit_to_canvas(f, ANIM_SIZE))
         durations.append(int(frame.info.get("duration", 100)))
 
-    if GIF2WEBP_BIN is not None:
-        out = _encode_animated_gif2webp(raw_frames, durations)
-        if out is not None:
-            return out, "webp"
-        logger.warning("gif2webp encoding failed; falling back to Pillow WebP")
+    # Signal animates APNG, not animated WebP — empirically confirmed against
+    # a random sample of community "animated" packs from signalstickers.org:
+    # 100% APNG, 0 animated WebP. Animated WebP renders as static on Signal
+    # Android. So encode animated stickers as palette APNG (smaller files,
+    # the same format the official animated packs use).
+    out = _encode_animated_apng(raw_frames, durations)
+    if out is not None:
+        return out, "apng"
 
-    return _encode_webp_under_limit(raw_frames, durations)
+    # APNG didn't fit even at minimum settings — fall back to a static PNG
+    # of the first frame so the upload still succeeds.
+    logger.warning("APNG could not fit 300KB; falling back to static first frame")
+    return _shrink_png_under_limit(raw_frames[0]), "png"
 
 
 def _strided_durations(durations: list[int], stride: int) -> list[int]:
@@ -144,54 +140,55 @@ def _strided_durations(durations: list[int], stride: int) -> list[int]:
     ]
 
 
-def _frames_to_gif_bytes(frames: list[Image.Image], durations: list[int]) -> bytes:
+def _quantize_to_shared_palette(frames: list[Image.Image], colors: int) -> list[Image.Image]:
+    """Quantize every frame to a single shared N-color palette and bake
+    transparency at palette index `colors`. Pillow's APNG encoder requires
+    consistent mode/palette across frames; per-frame palettes break the
+    inter-frame disposal step ("images do not match")."""
+    size = frames[0].size
+    montage = Image.new("RGB", (size[0], size[1] * len(frames)))
+    for i, f in enumerate(frames):
+        montage.paste(f.convert("RGB"), (0, i * size[1]))
+    pal_img = montage.quantize(colors=colors, method=Image.Quantize.MEDIANCUT)
+
+    out: list[Image.Image] = []
+    for f in frames:
+        alpha = f.split()[-1]
+        p = f.convert("RGB").quantize(palette=pal_img, dither=Image.Dither.NONE)
+        # Reserve index `colors` for transparent pixels.
+        mask = alpha.point(lambda x: 0 if x < 128 else 255)
+        p.paste(colors, mask=Image.eval(mask, lambda x: 255 - x))
+        p.info["transparency"] = colors
+        out.append(p)
+    return out
+
+
+def _encode_apng(frames: list[Image.Image], durations: list[int], colors: int) -> bytes:
+    quantized = _quantize_to_shared_palette(frames, colors)
     buf = BytesIO()
-    frames[0].save(
+    # Note: no `disposal` kwarg — Pillow's APNG disposal step crashes with
+    # "images do not match" on palette frames; omitting it produces the
+    # working stream that Signal Android animates the same way the
+    # community reference packs do.
+    quantized[0].save(
         buf,
-        format="GIF",
+        format="PNG",
         save_all=True,
-        append_images=frames[1:],
+        append_images=quantized[1:],
         duration=durations,
         loop=0,
-        disposal=2,
+        transparency=colors,
+        optimize=True,
     )
     return buf.getvalue()
 
 
-def _run_gif2webp(gif_bytes: bytes, quality: int) -> bytes | None:
-    assert GIF2WEBP_BIN is not None
-    gif_path = webp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as gf:
-            gf.write(gif_bytes)
-            gif_path = gf.name
-        webp_path = gif_path + ".webp"
-        result = subprocess.run(
-            [GIF2WEBP_BIN, "-lossy", "-q", str(quality), "-m", "4", gif_path, "-o", webp_path],
-            capture_output=True,
-            timeout=120,
-        )
-        if result.returncode != 0 or not os.path.exists(webp_path):
-            logger.warning("gif2webp returned %s: %s", result.returncode, result.stderr[:200])
-            return None
-        with open(webp_path, "rb") as f:
-            return f.read()
-    except (OSError, subprocess.SubprocessError) as e:
-        logger.warning("gif2webp invocation failed: %s", e)
-        return None
-    finally:
-        for p in (gif_path, webp_path):
-            if p and os.path.exists(p):
-                with contextlib.suppress(OSError):
-                    os.unlink(p)
-
-
-def _encode_animated_gif2webp(frames: list[Image.Image], durations: list[int]) -> bytes | None:
-    # gif2webp reads a GIF, so we build a strided intermediate GIF (the
-    # DCcon source is already ≤256-color GIF, so re-palettizing costs little)
-    # and encode it. Same stride/quality search as the Pillow path, but
-    # gif2webp's sub-frame compression fits 512×512 at high quality.
-    _MAX_FRAMES_TARGET = 60
+def _encode_animated_apng(frames: list[Image.Image], durations: list[int]) -> bytes | None:
+    # APNG palette compression: ~7-10KB per frame at 64 colors → 300KB ≈ 35
+    # frames. Stride aggressively for long source GIFs; degrade palette
+    # depth only when stride alone can't fit (preserve frame smoothness
+    # before sacrificing colors).
+    _MAX_FRAMES_TARGET = 35
     initial_stride = max(1, len(frames) // _MAX_FRAMES_TARGET)
     candidate_strides = sorted(
         {initial_stride, initial_stride * 2, initial_stride * 3, initial_stride * 4}
@@ -200,146 +197,19 @@ def _encode_animated_gif2webp(frames: list[Image.Image], durations: list[int]) -
         sub_frames = frames[::stride]
         if len(sub_frames) < 2:
             break
-        gif_bytes = _frames_to_gif_bytes(sub_frames, _strided_durations(durations, stride))
-        for quality in (85, 70, 55, 40):
-            out = _run_gif2webp(gif_bytes, quality)
-            if out is None:
-                break  # gif2webp broken — bail to Pillow fallback
+        sub_durations = _strided_durations(durations, stride)
+        for colors in (128, 64, 32):
+            out = _encode_apng(sub_frames, sub_durations, colors)
             if len(out) <= SIGNAL_MAX_BYTES:
                 return out
     return None
 
 
-# WebP encoder method: 0 = fastest, 6 = best compression. method=2 keeps
-# per-encode time under a second for typical DCcon GIFs; method=4 would
-# trim ~5-10% off file sizes but multiplies pack-conversion time by ~2x
-# given we encode multiple times per sticker for quality/stride search.
-WEBP_METHOD = 2
-
-# Minimum per-frame display duration. 33ms ≈ 30fps cap. The fps perceived
-# in playback is `1000 / max_kept_frame_duration` — so to feel like 30fps
-# we need both this minimum AND enough kept frames that no stride forces
-# us to consolidate multiple source frames into one held output frame.
-# See _encode_webp_under_limit for the stride-1-first strategy that makes
-# 30fps actually achievable on the source frame counts we can fit.
+# Minimum per-frame display duration. 33ms ≈ 30fps cap. The actual playback
+# fps in the output APNG is 1000 / per_frame_duration. Source frames whose
+# declared duration is shorter than this (e.g. 30ms DCcon GIFs) get clamped
+# so playback doesn't run faster than 30fps perceived.
 MIN_FRAME_DURATION_MS = 33
-
-
-def _encode_webp(frames: list[Image.Image], durations: list[int], quality: int) -> bytes:
-    buf = BytesIO()
-    frames[0].save(
-        buf,
-        format="WEBP",
-        save_all=True,
-        append_images=frames[1:],
-        duration=durations,
-        loop=0,
-        quality=quality,
-        method=WEBP_METHOD,
-        # Force every frame to be a key frame (kmin=kmax=1). Without this
-        # libwebp emits sub-frame diffs (variable-sized rectangles with
-        # mixed alpha/blend modes), which Glide on Android sometimes
-        # refuses to animate, rendering as static instead. With key-frames
-        # only, each frame is a full 512×512 RGBA image — bigger files
-        # but rock-solid compatibility across Signal clients.
-        kmin=1,
-        kmax=1,
-        minimize_size=False,
-        allow_mixed=False,
-        lossless=False,
-        background=(0, 0, 0, 0),
-    )
-    return buf.getvalue()
-
-
-def _encode_webp_under_limit(
-    frames: list[Image.Image], durations: list[int]
-) -> tuple[bytes, ProcessedExt]:
-    # Strategy with ANIM_SIZE=256: each frame at q=70 is ~3KB, so a 300KB
-    # budget holds ~80 frames. _MAX_FRAMES_TARGET=70 keeps the initial
-    # stride small enough to try stride=1 (= every source frame, max fps)
-    # whenever the source is ≤70 frames. Quality search per stride probes
-    # at q=40, then climbs to higher qualities only when there's headroom.
-    _MAX_FRAMES_TARGET = 70
-    initial_stride = max(1, len(frames) // _MAX_FRAMES_TARGET)
-    candidate_strides = sorted(
-        {
-            initial_stride,
-            initial_stride * 2,
-            initial_stride * 3,
-            initial_stride * 4,
-            initial_stride * 6,
-            initial_stride * 9,
-        }
-    )
-
-    def _sub(stride: int) -> tuple[list[Image.Image], list[int]] | None:
-        sub_frames = frames[::stride]
-        if len(sub_frames) < 2:
-            return None
-        sub_durations = [
-            sum(max(d, MIN_FRAME_DURATION_MS) for d in durations[i : i + stride])
-            for i in range(0, len(durations), stride)
-        ]
-        return sub_frames, sub_durations
-
-    # Outer: stride (lowest first → more frames → smoother). For each
-    # stride, probe at the lowest quality first; if even that doesn't fit
-    # skip ahead. Otherwise climb the quality ladder, returning the
-    # highest that fits. Headroom checks short-circuit obviously-doomed
-    # upgrades so we don't waste encode passes.
-    for stride in candidate_strides:
-        sub = _sub(stride)
-        if sub is None:
-            break
-        sub_frames, sub_durations = sub
-
-        probe = _encode_webp(sub_frames, sub_durations, 40)
-        if len(probe) > SIGNAL_MAX_BYTES:
-            continue
-
-        # Each quality step is roughly +15-25% file size. Try the highest
-        # quality whose ratio to probe still fits.
-        for quality, headroom_threshold in ((90, 0.35), (75, 0.5), (60, 0.7)):
-            if len(probe) > SIGNAL_MAX_BYTES * headroom_threshold:
-                continue
-            out = _encode_webp(sub_frames, sub_durations, quality)
-            if len(out) <= SIGNAL_MAX_BYTES:
-                return out, "webp"
-        return probe, "webp"
-
-    # Last resort: static PNG of frame 0 (uses PNG quantize fallback for size).
-    return _shrink_png_under_limit(frames[0]), "png"
-
-
-def _encode_apng(frames: list[Image.Image], durations: list[int]) -> bytes:
-    buf = BytesIO()
-    frames[0].save(
-        buf,
-        format="PNG",
-        save_all=True,
-        append_images=frames[1:],
-        duration=durations,
-        loop=0,
-        disposal=2,
-    )
-    return buf.getvalue()
-
-
-def _encode_apng_under_limit(
-    frames: list[Image.Image], durations: list[int]
-) -> tuple[bytes, ProcessedExt]:
-    for stride in (1, 2, 3, 4, 6, 8, 12):
-        sub_frames = frames[::stride]
-        if len(sub_frames) < 2:
-            break
-        sub_durations = [sum(durations[i : i + stride]) for i in range(0, len(durations), stride)]
-        out = _encode_apng(sub_frames, sub_durations)
-        if len(out) <= SIGNAL_MAX_BYTES:
-            return out, "apng"
-
-    static_out = _shrink_png_under_limit(frames[0])
-    return static_out, "png"
 
 
 async def process_pack(

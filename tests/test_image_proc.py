@@ -62,10 +62,11 @@ def test_process_static_keeps_background_when_disabled():
     assert border[3] == 255, f"with remove_bg=False, white border stays opaque, got {border}"
 
 
-def test_animated_gif_becomes_webp_under_limit(sample_animated_gif):
+def test_animated_gif_becomes_apng_under_limit(sample_animated_gif):
     out, ext = process_sticker_bytes(sample_animated_gif, source_ext="gif", remove_bg=True)
-    assert ext == "webp"
+    assert ext == "apng"
     img = _decode(out)
+    assert img.format == "PNG"
     assert getattr(img, "is_animated", False) is True
     assert img.size == (ANIM_SIZE, ANIM_SIZE)
     assert len(out) <= SIGNAL_MAX_BYTES
@@ -103,4 +104,4 @@ async def test_process_pack_populates_processed_fields(sample_static_png, sample
     await process_pack(pack)
     assert pack.cover_processed is not None
     assert pack.stickers[0].processed_bytes is not None
-    assert pack.stickers[0].processed_ext == "webp"
+    assert pack.stickers[0].processed_ext == "apng"
