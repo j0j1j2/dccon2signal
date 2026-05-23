@@ -71,23 +71,41 @@ def _fit_512(img: Image.Image) -> Image.Image:
     return _fit_to_canvas(img, SIGNAL_SIZE)
 
 
-def _fit_animated(img: Image.Image) -> Image.Image:
-    """Keep animated source pixels untouched when both axes are ≤ ANIM_MAX_SIZE;
-    otherwise downscale (LANCZOS) so the longest side equals ANIM_MAX_SIZE."""
+def _fit_animated(img: Image.Image, target_side: int) -> Image.Image:
+    """Center `img` on a `target_side`×`target_side` transparent canvas. If
+    img is bigger than the canvas on either axis, LANCZOS-downscale first."""
     img = img.convert("RGBA")
     longest = max(img.width, img.height)
-    if longest <= ANIM_MAX_SIZE and img.width == img.height:
+    if longest > target_side:
+        scale = target_side / longest
+        nw, nh = round(img.width * scale), round(img.height * scale)
+        img = img.resize((nw, nh), Image.Resampling.LANCZOS)
+    if img.width == target_side and img.height == target_side:
         return img
-    if longest <= ANIM_MAX_SIZE:
-        # Non-square source — pad to a square at the source's longest side so
-        # all frames share dimensions (apngasm requires equal frame size).
-        side = longest
-        canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
-        ox = (side - img.width) // 2
-        oy = (side - img.height) // 2
-        canvas.paste(img, (ox, oy), img)
-        return canvas
-    return _fit_to_canvas(img, ANIM_MAX_SIZE)
+    canvas = Image.new("RGBA", (target_side, target_side), (0, 0, 0, 0))
+    ox = (target_side - img.width) // 2
+    oy = (target_side - img.height) // 2
+    canvas.paste(img, (ox, oy), img)
+    return canvas
+
+
+def _animated_canvas_size(img: Image.Image) -> int:
+    """Pick a single square canvas size that fits every frame of `img`. Some
+    DCcon GIFs have frames that shrink/grow between snapshots (e.g.
+    200×200 → 200×215); apngasm requires equal frame sizes, so we settle on
+    the largest extent across all frames, capped at ANIM_MAX_SIZE. Frames
+    with absurdly large metadata (some DCcons report 27264×62464 in stray
+    image descriptors while actually carrying 200×200 pixel data) are
+    ignored when computing the canvas — they're handled in
+    `_process_animated` by falling back to the previous good frame."""
+    base = max(img.size)
+    sane_max = max(base * 2, ANIM_MAX_SIZE)
+    longest = base
+    for frame in ImageSequence.Iterator(img):
+        for dim in (frame.width, frame.height):
+            if dim <= sane_max:
+                longest = max(longest, dim)
+    return min(longest, ANIM_MAX_SIZE)
 
 
 def _encode_png(img: Image.Image) -> bytes:
@@ -133,14 +151,38 @@ def process_sticker_bytes(
 
 
 def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, ProcessedExt]:
+    canvas_side = _animated_canvas_size(img)
     raw_frames: list[Image.Image] = []
     durations: list[int] = []
+    sane_max = max(canvas_side * 4, ANIM_MAX_SIZE * 4)
     for frame in ImageSequence.Iterator(img):
-        f = frame.convert("RGBA")
+        duration = int(frame.info.get("duration", 100))
+        if frame.width > sane_max or frame.height > sane_max:
+            # Bogus image-descriptor metadata (some DCcons report
+            # 27264×62464 in a stray frame while actually carrying ~200×200
+            # of pixel data). Decoding allocates billions of pixels of RAM,
+            # so substitute the previous frame and only inherit the timing.
+            if raw_frames:
+                raw_frames.append(raw_frames[-1])
+                durations.append(duration)
+            continue
+        try:
+            f = frame.convert("RGBA")
+        except (MemoryError, OSError) as e:
+            logger.warning(
+                "skipping animated frame %d due to %s: %s",
+                len(raw_frames),
+                type(e).__name__,
+                e,
+            )
+            if raw_frames:
+                raw_frames.append(raw_frames[-1])
+                durations.append(duration)
+            continue
         if remove_bg:
             f = _remove_white_bg(f)
-        raw_frames.append(_fit_animated(f))
-        durations.append(int(frame.info.get("duration", 100)))
+        raw_frames.append(_fit_animated(f, canvas_side))
+        durations.append(duration)
 
     out = apng_encoder.encode_animated_apng(
         raw_frames,
