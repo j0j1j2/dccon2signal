@@ -4,6 +4,7 @@ from io import BytesIO
 
 from PIL import Image, ImageSequence
 
+from dccon2signal import apng_encoder
 from dccon2signal.models import DcconPack, ImageExt, ProcessedExt
 
 logger = logging.getLogger(__name__)
@@ -17,12 +18,11 @@ logger = logging.getLogger(__name__)
 Image.MAX_IMAGE_PIXELS = None
 
 SIGNAL_SIZE = 512
-# Animated stickers go out as palette APNG (Signal animates APNG, not
-# animated WebP — confirmed empirically against signalstickers.org
-# community packs). 256×256 is the smallest canvas that still matches
-# Signal's chat display size; smaller pixel area buys headroom to keep
-# more frames (= higher fps) at the 300KB-per-sticker budget.
-ANIM_SIZE = 256
+# Cap for animated stickers: source pixels pass through unchanged when both
+# axes are at or below this. The 256-pixel upscale the old encoder used cost
+# us roughly the whole 300KB budget on 50-frame stickers; with apngasm doing
+# inter-frame diff, source size is the right answer.
+ANIM_MAX_SIZE = 512
 # Signal's per-sticker limit is documented as "300 KB" but server-side it
 # means 300 KiB (= 300 * 1024 = 307,200 bytes). Confirmed by surveying the
 # community Gojill-Animated pack: production stickers up to 304,561 bytes
@@ -30,6 +30,12 @@ ANIM_SIZE = 256
 # don't burn ~7KB of budget we actually have.
 SIGNAL_MAX_BYTES = 307_200
 WHITE_THRESHOLD = 240
+
+# Minimum per-frame display duration. 33ms ≈ 30fps cap. The actual playback
+# fps in the output APNG is 1000 / per_frame_duration. Source frames whose
+# declared duration is shorter than this (e.g. 30ms DCcon GIFs) get clamped
+# so playback doesn't run faster than 30fps perceived.
+MIN_FRAME_DURATION_MS = 33
 
 
 def _remove_white_bg(img: Image.Image) -> Image.Image:
@@ -65,22 +71,23 @@ def _fit_512(img: Image.Image) -> Image.Image:
     return _fit_to_canvas(img, SIGNAL_SIZE)
 
 
-def _fit_to_canvas_nearest(img: Image.Image, target_size: int) -> Image.Image:
-    """Like _fit_to_canvas but uses NEAREST resampling so the result has
-    the same set of colours as the source. Used for animated stickers
-    where palette stability matters more than smooth interpolation."""
+def _fit_animated(img: Image.Image) -> Image.Image:
+    """Keep animated source pixels untouched when both axes are ≤ ANIM_MAX_SIZE;
+    otherwise downscale (LANCZOS) so the longest side equals ANIM_MAX_SIZE."""
     img = img.convert("RGBA")
-    scale = target_size / max(img.width, img.height)
-    new_w = round(img.width * scale)
-    new_h = round(img.height * scale)
-    resized = img.resize((new_w, new_h), Image.Resampling.NEAREST)
-    if new_w == target_size and new_h == target_size:
-        return resized
-    canvas = Image.new("RGBA", (target_size, target_size), (0, 0, 0, 0))
-    ox = (target_size - new_w) // 2
-    oy = (target_size - new_h) // 2
-    canvas.paste(resized, (ox, oy), resized)
-    return canvas
+    longest = max(img.width, img.height)
+    if longest <= ANIM_MAX_SIZE and img.width == img.height:
+        return img
+    if longest <= ANIM_MAX_SIZE:
+        # Non-square source — pad to a square at the source's longest side so
+        # all frames share dimensions (apngasm requires equal frame size).
+        side = longest
+        canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+        ox = (side - img.width) // 2
+        oy = (side - img.height) // 2
+        canvas.paste(img, (ox, oy), img)
+        return canvas
+    return _fit_to_canvas(img, ANIM_MAX_SIZE)
 
 
 def _encode_png(img: Image.Image) -> bytes:
@@ -126,115 +133,28 @@ def process_sticker_bytes(
 
 
 def _process_animated(img: Image.Image, *, remove_bg: bool) -> tuple[bytes, ProcessedExt]:
-    # Decode every source frame to a fitted RGBA image once. Upscale via
-    # NEAREST: it preserves the source palette exactly (each pixel
-    # duplicated, no interpolated colours) — Lanczos would invent
-    # thousands of new colours and double the encoded palette-APNG size.
     raw_frames: list[Image.Image] = []
     durations: list[int] = []
     for frame in ImageSequence.Iterator(img):
         f = frame.convert("RGBA")
         if remove_bg:
             f = _remove_white_bg(f)
-        raw_frames.append(_fit_to_canvas_nearest(f, ANIM_SIZE))
+        raw_frames.append(_fit_animated(f))
         durations.append(int(frame.info.get("duration", 100)))
 
-    # Signal animates APNG, not animated WebP — empirically confirmed against
-    # a random sample of community "animated" packs from signalstickers.org:
-    # 100% APNG, 0 animated WebP. Animated WebP renders as static on Signal
-    # Android. So encode animated stickers as palette APNG (smaller files,
-    # the same format the official animated packs use).
-    out = _encode_animated_apng(raw_frames, durations)
+    out = apng_encoder.encode_animated_apng(
+        raw_frames,
+        durations,
+        SIGNAL_MAX_BYTES,
+        min_frame_duration_ms=MIN_FRAME_DURATION_MS,
+    )
     if out is not None:
         return out, "apng"
 
-    # APNG didn't fit even at minimum settings — fall back to a static PNG
-    # of the first frame so the upload still succeeds.
+    # No ladder step fit at any stride — fall back to a static PNG of the
+    # first frame so the upload still succeeds.
     logger.warning("APNG could not fit 300KB; falling back to static first frame")
     return _shrink_png_under_limit(raw_frames[0]), "png"
-
-
-def _strided_durations(durations: list[int], stride: int) -> list[int]:
-    # Each kept frame's duration = sum of source-frame durations it replaces,
-    # with each source frame clamped to MIN_FRAME_DURATION_MS. Preserves total
-    # playback duration under stride and caps fps at ~30.
-    return [
-        sum(max(d, MIN_FRAME_DURATION_MS) for d in durations[i : i + stride])
-        for i in range(0, len(durations), stride)
-    ]
-
-
-def _quantize_to_shared_palette(frames: list[Image.Image], colors: int) -> list[Image.Image]:
-    """Quantize every frame to a single shared N-color palette and bake
-    transparency at palette index `colors`. Pillow's APNG encoder requires
-    consistent mode/palette across frames; per-frame palettes break the
-    inter-frame disposal step ("images do not match")."""
-    size = frames[0].size
-    montage = Image.new("RGB", (size[0], size[1] * len(frames)))
-    for i, f in enumerate(frames):
-        montage.paste(f.convert("RGB"), (0, i * size[1]))
-    pal_img = montage.quantize(colors=colors, method=Image.Quantize.MEDIANCUT)
-
-    out: list[Image.Image] = []
-    for f in frames:
-        alpha = f.split()[-1]
-        p = f.convert("RGB").quantize(palette=pal_img, dither=Image.Dither.NONE)
-        # Reserve index `colors` for transparent pixels.
-        mask = alpha.point(lambda x: 0 if x < 128 else 255)
-        p.paste(colors, mask=Image.eval(mask, lambda x: 255 - x))
-        p.info["transparency"] = colors
-        out.append(p)
-    return out
-
-
-def _encode_apng(frames: list[Image.Image], durations: list[int], colors: int) -> bytes:
-    quantized = _quantize_to_shared_palette(frames, colors)
-    buf = BytesIO()
-    # Note: no `disposal` kwarg — Pillow's APNG disposal step crashes with
-    # "images do not match" on palette frames; omitting it produces the
-    # working stream that Signal Android animates the same way the
-    # community reference packs do.
-    quantized[0].save(
-        buf,
-        format="PNG",
-        save_all=True,
-        append_images=quantized[1:],
-        duration=durations,
-        loop=0,
-        transparency=colors,
-        optimize=True,
-    )
-    return buf.getvalue()
-
-
-def _encode_animated_apng(frames: list[Image.Image], durations: list[int]) -> bytes | None:
-    # Aim for smoothness over palette depth: pick the smallest stride
-    # that fits 300KB at any colour count from 128 down to 16. For long
-    # DCcon GIFs (100+ frames) this lands at stride=2 / 16-colour palette
-    # ≈ 15fps; shorter sources sit at stride=1 with much higher colour
-    # counts.
-    _MAX_FRAMES_TARGET = 60
-    initial_stride = max(1, len(frames) // _MAX_FRAMES_TARGET)
-    candidate_strides = sorted(
-        {initial_stride, initial_stride * 2, initial_stride * 3, initial_stride * 4}
-    )
-    for stride in candidate_strides:
-        sub_frames = frames[::stride]
-        if len(sub_frames) < 2:
-            break
-        sub_durations = _strided_durations(durations, stride)
-        for colors in (128, 64, 32):
-            out = _encode_apng(sub_frames, sub_durations, colors)
-            if len(out) <= SIGNAL_MAX_BYTES:
-                return out
-    return None
-
-
-# Minimum per-frame display duration. 33ms ≈ 30fps cap. The actual playback
-# fps in the output APNG is 1000 / per_frame_duration. Source frames whose
-# declared duration is shorter than this (e.g. 30ms DCcon GIFs) get clamped
-# so playback doesn't run faster than 30fps perceived.
-MIN_FRAME_DURATION_MS = 33
 
 
 async def process_pack(
@@ -256,7 +176,10 @@ async def process_pack(
 
     if pack.cover_bytes is not None:
         pack.cover_processed, _ = process_sticker_bytes(
-            pack.cover_bytes, source_ext="png", remove_bg=remove_bg, static_only=True
+            pack.cover_bytes,
+            source_ext="png",
+            remove_bg=remove_bg,
+            static_only=True,
         )
         done += 1
         if on_progress is not None:

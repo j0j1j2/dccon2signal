@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 ImageExt = Literal["png", "gif"]
-ProcessedExt = Literal["png", "apng", "webp"]
+ProcessedExt = Literal["png", "apng"]
 
 
 @dataclass

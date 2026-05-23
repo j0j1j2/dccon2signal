@@ -3,7 +3,7 @@
 디시인사이드 디시콘(DCcon) 패키지를 Signal Messenger 스티커 팩으로 변환·업로드하는 CLI.
 
 - 디시콘 패키지 ID 만 입력하면 자동으로 스크래핑 → 변환 → Signal 업로드
-- 정적 콘은 **512×512 PNG**, GIF 콘은 **512×512 animated WebP** (모든 프레임 유지)
+- 정적 콘은 **512×512 PNG**, GIF 콘은 **소스 크기 APNG** (300 KiB 안에 들어가는 한 모든 프레임 보존)
 - 원본 배경 유지가 기본 (디시콘은 보통 흰배경이 의도된 경우가 많음). 투명화 원하면 `--remove-bg`
 - 변환 결과는 항상 `out/<package_idx>/` 에 저장돼서 실패해도 안전
 
@@ -17,15 +17,15 @@ uv sync
 
 `uv` 가 없으면: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-**권장: `gif2webp` 설치** (Google libwebp-tools). 애니메이션 스티커를 Signal Android 에서도 제대로 재생되는 형식으로 인코딩합니다. 없으면 Pillow 로 폴백되지만 **Android 에서 애니메이션이 첫 프레임에 멈출 수 있음**.
+**필수: `apngasm` + `oxipng` 설치.** 애니메이션 스티커를 Signal 이 재생하는 APNG 포맷으로 인코딩합니다. 둘 다 없으면 변환이 실패합니다.
 
 ```bash
 # macOS
-brew install webp
-# Debian/Ubuntu
-sudo apt install webp
+brew install apngasm oxipng
+# Debian/Ubuntu 22.04+
+sudo apt install apngasm oxipng
 # Arch
-sudo pacman -S libwebp
+sudo pacman -S apngasm oxipng
 ```
 
 ## 빠른 시작 — 변환만 (인증 불필요)
@@ -40,7 +40,7 @@ out/170660/
 ├── cover.png            # 512×512 표지
 ├── stickers/
 │   ├── 1.png            # 정적 스티커 (PNG)
-│   ├── 2.webp           # 애니메이션 스티커 (animated WebP)
+│   ├── 2.apng           # 애니메이션 스티커 (APNG)
 │   └── ...
 └── manifest.json        # 팩 메타데이터
 ```
@@ -163,7 +163,7 @@ uv run dccon2signal 170660 12345 99999
 
 1. **Scraper** — `POST https://dccon.dcinside.com/index/package_detail` 로 패키지 메타데이터 + 스티커 이미지 경로 목록 받음
 2. **Downloader** — 이미지를 병렬 다운로드 (Referer 헤더 필수)
-3. **Image Processor** — Pillow 로 512×512 캔버스에 업스케일 (Lanczos), 정적은 PNG, 애니메이션은 animated WebP (300KB 제한에 맞춰 quality·stride 자동 조절). `--remove-bg` 옵션 시 흰배경 → 알파
+3. **Image Processor** — 정적은 Pillow 로 512×512 캔버스에 업스케일 (Lanczos) 한 PNG. 애니메이션은 소스 크기 유지하고 공유 팔레트 양자화 → `apngasm` 어셈블 → `oxipng` 후처리 (300 KiB 제한에 맞춰 컬러 256 → 8 단계로 내려가며 탐색, 그래도 안 맞으면 stride 증가). `--remove-bg` 옵션 시 흰배경 → 알파
 4. **Pack Builder** — `signalstickers-client` 의 `LocalStickerPack` 으로 변환
 5. **Uploader** — Signal 서버에 업로드 → `pack_id` + `pack_key` 받아서 설치 링크 조립
 

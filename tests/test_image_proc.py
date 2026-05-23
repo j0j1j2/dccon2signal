@@ -3,7 +3,6 @@ from io import BytesIO
 from PIL import Image
 
 from dccon2signal.image_proc import (
-    ANIM_SIZE,
     SIGNAL_MAX_BYTES,
     SIGNAL_SIZE,
     process_pack,
@@ -68,8 +67,21 @@ def test_animated_gif_becomes_apng_under_limit(sample_animated_gif):
     img = _decode(out)
     assert img.format == "PNG"
     assert getattr(img, "is_animated", False) is True
-    assert img.size == (ANIM_SIZE, ANIM_SIZE)
+    # Encoder keeps source size when it fits, so the fixture (200×200) stays 200×200.
+    src = Image.open(BytesIO(sample_animated_gif))
+    assert img.size == src.size
     assert len(out) <= SIGNAL_MAX_BYTES
+
+
+def test_animated_gif_preserves_all_frames(sample_animated_gif):
+    """Visual regression: with the apngasm encoder, short animations should
+    not lose frames to stride. The fixture is short enough that stride=1
+    must fit on the colour ladder."""
+    out, ext = process_sticker_bytes(sample_animated_gif, source_ext="gif", remove_bg=False)
+    assert ext == "apng"
+    out_img = _decode(out)
+    src = Image.open(BytesIO(sample_animated_gif))
+    assert getattr(out_img, "n_frames", 1) == getattr(src, "n_frames", 1)
 
 
 def test_animated_gif_static_only_returns_png(sample_animated_gif):
