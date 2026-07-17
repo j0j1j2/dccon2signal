@@ -106,9 +106,12 @@ def _process_animated(gif_bytes: bytes) -> tuple[bytes, ProcessedExt]:
     if out is not None:
         return out, "apng"
 
-    # Encoder couldn't fit any (stride, colour) combo. Fall back to a
+    # Encoder couldn't fit any quality/scale/stride combo. Fall back to a
     # static PNG of the first frame so the upload still succeeds.
-    logger.warning("APNG could not fit %d bytes; falling back to static first frame", SIGNAL_MAX_BYTES)
+    logger.warning(
+        "APNG could not fit %d bytes; falling back to static first frame",
+        SIGNAL_MAX_BYTES,
+    )
     img = Image.open(BytesIO(gif_bytes))
     img.seek(0)
     first = img.convert("RGBA")

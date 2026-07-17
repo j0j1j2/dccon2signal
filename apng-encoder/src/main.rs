@@ -6,8 +6,8 @@
 //!   1. Decode all GIF frames into RGBA + per-frame durations.
 //!   2. Normalize to a single canvas size (handles DCcons that grow/shrink
 //!      per-frame, and bogus image-descriptor sizes).
-//!   3. Walk a quality ladder: probe at the smallest palette to learn
-//!      whether this (stride, colour) combo can fit, then walk up.
+//!   3. Walk a convert-to-apng-style compression ladder: quality bands first,
+//!      then resolution scale-down, then frame stride as the last resort.
 //!   4. Quantize all frames to a single shared palette via libimagequant
 //!      and write the result as a palette-mode APNG (indexed pixels +
 //!      tRNS for transparency).
@@ -24,10 +24,16 @@ use png::{BitDepth, BlendOp, ColorType, DisposeOp};
 
 const MIN_FRAME_DURATION_MS: u32 = 33;
 const ANIM_MAX_SIDE: u32 = 512;
-// Colour-first ladder: try richer palettes at the current stride before
-// dropping any frames. 32 is the floor — anything flatter posterizes the
-// content badly. If 32 doesn't fit at this stride, escalate stride.
-const COLORS_LADDER: &[u32] = &[256, 128, 64, 32];
+// Mirrors the useful part of convert-to-apng's pngquant ladder:
+// try progressively lower quality bands before sacrificing resolution
+// or frame count.
+const QUALITY_LADDER: &[QualityBand] = &[
+    QualityBand { min: 80, max: 100 },
+    QualityBand { min: 70, max: 90 },
+    QualityBand { min: 60, max: 80 },
+    QualityBand { min: 50, max: 70 },
+    QualityBand { min: 0, max: 50 },
+];
 
 #[derive(Clone)]
 struct RawFrame {
@@ -48,6 +54,12 @@ struct Frame {
     width: u32,
     height: u32,
     delay_ms: u32,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct QualityBand {
+    min: u8,
+    max: u8,
 }
 
 fn main() -> ExitCode {
@@ -208,20 +220,21 @@ fn decode_gif(buf: &[u8]) -> Result<Vec<Frame>> {
     Ok(frames)
 }
 
+#[cfg(test)]
+fn quality_ladder() -> Vec<QualityBand> {
+    QUALITY_LADDER.to_vec()
+}
+
 fn canvas_ladder(source_side: u32) -> Vec<u32> {
-    // From source size down to ~half, stepping ~20 % each rung. Floor at 96
-    // so Signal's chat-render sizing still has detail to interpolate.
-    let mut out = Vec::new();
-    let mut s = source_side;
-    while s >= 96 {
-        out.push(s);
-        s = (s as f32 * 0.8) as u32;
-        if out.len() >= 4 {
-            break;
+    // convert-to-apng falls back through 90%, 80%, 70%, 60%, 50% size steps
+    // after quality reduction. Keep the source size first so short animations
+    // can preserve their original dimensions.
+    let mut out = vec![source_side];
+    for percent in [90u32, 80, 70, 60, 50] {
+        let scaled = ((source_side * percent) + 50) / 100;
+        if scaled >= 1 && out.last() != Some(&scaled) {
+            out.push(scaled);
         }
-    }
-    if out.is_empty() {
-        out.push(source_side);
     }
     out
 }
@@ -279,43 +292,64 @@ fn try_at(
     label_stride: usize,
 ) -> Option<Vec<u8>> {
     let zopfli_rescue_cutoff = max_bytes + max_bytes / 6;
-    let min_colors = *COLORS_LADDER.last().expect("non-empty colour ladder");
+    let lowest_quality = *QUALITY_LADDER.last().expect("non-empty quality ladder");
 
     let mut min_fast: Option<Vec<u8>> = None;
-    for &colors in COLORS_LADDER {
-        match encode_at_colors(frames, delays, colors, DeflateStrength::Fast) {
+    for &quality in QUALITY_LADDER {
+        match encode_at_quality(frames, delays, quality, DeflateStrength::Fast) {
             Ok(out) => {
                 if out.len() <= max_bytes {
-                    eprintln!("fit: canvas={} stride={} colors={} size={}",
-                              label_canvas, label_stride, colors, out.len());
+                    eprintln!(
+                        "fit: canvas={} stride={} quality={}-{} size={}",
+                        label_canvas,
+                        label_stride,
+                        quality.min,
+                        quality.max,
+                        out.len()
+                    );
                     return Some(out);
                 }
-                if colors == min_colors {
+                if quality == lowest_quality {
                     min_fast = Some(out);
                 }
             }
-            Err(e) => eprintln!("encode error canvas={label_canvas} stride={label_stride} colors={colors}: {e:#}"),
+            Err(e) => eprintln!(
+                "encode error canvas={label_canvas} stride={label_stride} quality={}-{}: {e:#}",
+                quality.min, quality.max
+            ),
         }
     }
     if let Some(min_out) = min_fast {
         if min_out.len() <= zopfli_rescue_cutoff {
             if let Ok(rescued) =
-                encode_at_colors(frames, delays, min_colors, DeflateStrength::Slow)
+                encode_at_quality(frames, delays, lowest_quality, DeflateStrength::Slow)
             {
                 if rescued.len() <= max_bytes {
-                    for &colors in &COLORS_LADDER[..COLORS_LADDER.len() - 1] {
+                    for &quality in &QUALITY_LADDER[..QUALITY_LADDER.len() - 1] {
                         if let Ok(out) =
-                            encode_at_colors(frames, delays, colors, DeflateStrength::Slow)
+                            encode_at_quality(frames, delays, quality, DeflateStrength::Slow)
                         {
                             if out.len() <= max_bytes {
-                                eprintln!("fit (zopfli): canvas={} stride={} colors={} size={}",
-                                          label_canvas, label_stride, colors, out.len());
+                                eprintln!(
+                                    "fit (zopfli): canvas={} stride={} quality={}-{} size={}",
+                                    label_canvas,
+                                    label_stride,
+                                    quality.min,
+                                    quality.max,
+                                    out.len()
+                                );
                                 return Some(out);
                             }
                         }
                     }
-                    eprintln!("fit (zopfli min): canvas={} stride={} colors={} size={}",
-                              label_canvas, label_stride, min_colors, rescued.len());
+                    eprintln!(
+                        "fit (zopfli min): canvas={} stride={} quality={}-{} size={}",
+                        label_canvas,
+                        label_stride,
+                        lowest_quality.min,
+                        lowest_quality.max,
+                        rescued.len()
+                    );
                     return Some(rescued);
                 }
             }
@@ -417,27 +451,27 @@ fn diff_bbox(prev: &[u8], curr: &[u8], width: u32, height: u32) -> Option<(u32, 
     ))
 }
 
-fn encode_at_colors(
+fn encode_at_quality(
     frames: &[Frame],
     delays_ms: &[u32],
-    colors: u32,
+    quality: QualityBand,
     strength: DeflateStrength,
 ) -> Result<Vec<u8>> {
     let width = frames[0].width;
     let height = frames[0].height;
 
     let mut liq = imagequant::Attributes::new();
-    liq.set_max_colors(colors)
-        .map_err(|e| anyhow!("imagequant set_max_colors({colors}): {e:?}"))?;
-    liq.set_quality(0, 100)
-        .map_err(|e| anyhow!("imagequant set_quality: {e:?}"))?;
-    liq.set_speed(5).map_err(|e| anyhow!("imagequant set_speed: {e:?}"))?;
+    liq.set_max_colors(256)
+        .map_err(|e| anyhow!("imagequant set_max_colors(256): {e:?}"))?;
+    liq.set_quality(quality.min, quality.max)
+        .map_err(|e| anyhow!("imagequant set_quality({quality:?}): {e:?}"))?;
+    liq.set_speed(5)
+        .map_err(|e| anyhow!("imagequant set_speed: {e:?}"))?;
 
     let mut hist = imagequant::Histogram::new(&liq);
     for f in frames {
-        let rgba: &[imagequant::RGBA] = unsafe {
-            std::slice::from_raw_parts(f.rgba.as_ptr() as *const _, f.rgba.len() / 4)
-        };
+        let rgba: &[imagequant::RGBA] =
+            unsafe { std::slice::from_raw_parts(f.rgba.as_ptr() as *const _, f.rgba.len() / 4) };
         let mut img = liq
             .new_image(rgba, width as usize, height as usize, 0.0)
             .map_err(|e| anyhow!("imagequant new_image: {e:?}"))?;
@@ -461,9 +495,8 @@ fn encode_at_colors(
 
     let mut indexed_frames: Vec<Vec<u8>> = Vec::with_capacity(frames.len());
     for f in frames {
-        let rgba: &[imagequant::RGBA] = unsafe {
-            std::slice::from_raw_parts(f.rgba.as_ptr() as *const _, f.rgba.len() / 4)
-        };
+        let rgba: &[imagequant::RGBA] =
+            unsafe { std::slice::from_raw_parts(f.rgba.as_ptr() as *const _, f.rgba.len() / 4) };
         let mut img = liq
             .new_image(rgba, width as usize, height as usize, 0.0)
             .map_err(|e| anyhow!("imagequant new_image (remap): {e:?}"))?;
@@ -507,7 +540,14 @@ fn encode_at_colors(
             debug_assert!(
                 x + w <= width && y + h <= height,
                 "bbox {}+{}={} > {} or {}+{}={} > {}",
-                x, w, x + w, width, y, h, y + h, height,
+                x,
+                w,
+                x + w,
+                width,
+                y,
+                h,
+                y + h,
+                height,
             );
             let mut sub = Vec::with_capacity((w * h) as usize);
             for row in 0..h {
@@ -523,7 +563,9 @@ fn encode_at_colors(
             // dimension at a large position can fail the bounds check.
             writer.set_frame_position(0, 0)?;
             writer.set_frame_dimension(w, h).map_err(|e| {
-                anyhow!("set_frame_dimension({w},{h}) at pos ({x},{y}) canvas {width}x{height}: {e}")
+                anyhow!(
+                    "set_frame_dimension({w},{h}) at pos ({x},{y}) canvas {width}x{height}: {e}"
+                )
             })?;
             writer.set_frame_position(x, y)?;
             writer.write_image_data(&sub)?;
@@ -544,6 +586,38 @@ fn encode_at_colors(
             ..oxipng::Options::from_preset(4)
         },
     };
-    let optimized = oxipng::optimize_from_memory(&raw, &opts).map_err(|e| anyhow!("oxipng: {e}"))?;
-    Ok(if optimized.len() < raw.len() { optimized } else { raw })
+    let optimized =
+        oxipng::optimize_from_memory(&raw, &opts).map_err(|e| anyhow!("oxipng: {e}"))?;
+    Ok(if optimized.len() < raw.len() {
+        optimized
+    } else {
+        raw
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quality_ladder_matches_pngquant_style_bands() {
+        let bands = quality_ladder();
+
+        assert_eq!(
+            bands,
+            vec![
+                QualityBand { min: 80, max: 100 },
+                QualityBand { min: 70, max: 90 },
+                QualityBand { min: 60, max: 80 },
+                QualityBand { min: 50, max: 70 },
+                QualityBand { min: 0, max: 50 },
+            ]
+        );
+    }
+
+    #[test]
+    fn canvas_ladder_uses_codeberg_scale_percentages() {
+        assert_eq!(canvas_ladder(512), vec![512, 461, 410, 358, 307, 256]);
+        assert_eq!(canvas_ladder(200), vec![200, 180, 160, 140, 120, 100]);
+    }
 }

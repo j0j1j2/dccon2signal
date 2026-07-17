@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -58,10 +59,8 @@ def encode_animated_apng(gif_bytes: bytes, max_bytes: int) -> bytes | None:
             capture_output=True,
         )
     finally:
-        try:
+        with suppress(OSError):
             os.unlink(gif_path)
-        except OSError:
-            pass
 
     if res.returncode == 0:
         return res.stdout

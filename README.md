@@ -161,7 +161,7 @@ uv run dccon2signal 170660 12345 99999
 
 1. **Scraper** — `POST https://dccon.dcinside.com/index/package_detail` 로 패키지 메타데이터 + 스티커 이미지 경로 목록 받음
 2. **Downloader** — 이미지를 병렬 다운로드 (Referer 헤더 필수)
-3. **Image Processor** — 정적은 Pillow 로 512×512 캔버스에 업스케일 (Lanczos) 한 PNG. 애니메이션은 소스 크기 유지하고 공유 팔레트 양자화 → `apngasm` 어셈블 → `oxipng` 후처리 (300 KiB 제한에 맞춰 컬러 256 → 8 단계로 내려가며 탐색, 그래도 안 맞으면 stride 증가). `--remove-bg` 옵션 시 흰배경 → 알파
+3. **Image Processor** — 정적은 Pillow 로 512×512 캔버스에 업스케일 (Lanczos) 한 PNG. 애니메이션은 Rust `dccon-apng` 바이너리에서 GIF 디코딩 → 캔버스 정규화 → 공유 팔레트 양자화 → APNG frame diff 작성 → `oxipng` 후처리로 처리합니다. 300 KiB 제한에 맞추기 위해 품질 band(80-100 → 0-50), 해상도(90% → 50%), 마지막으로 frame stride 순서로 탐색합니다. `--remove-bg` 옵션 시 흰배경 → 알파
 4. **Pack Builder** — `signalstickers-client` 의 `LocalStickerPack` 으로 변환
 5. **Uploader** — Signal 서버에 업로드 → `pack_id` + `pack_key` 받아서 설치 링크 조립
 
