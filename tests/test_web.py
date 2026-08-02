@@ -56,6 +56,8 @@ async def test_emoji_catalog_and_picker(app):
     assert "changeEmojiPage(-1)" in detail.text
     assert "changeEmojiPage(1)" in detail.text
     assert "class=emoji-form" in detail.text
+    assert "class=sticker-title" in detail.text
+    assert ".sticker>div" not in detail.text
     assert "class=vote-button" in detail.text
     assert "submitEmoji(this.previousElementSibling,this)" in detail.text
     assert "ontouchend" in detail.text
