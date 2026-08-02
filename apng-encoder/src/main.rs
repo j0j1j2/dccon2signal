@@ -23,6 +23,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use png::{BitDepth, BlendOp, ColorType, DisposeOp};
 
 const MIN_FRAME_DURATION_MS: u32 = 33;
+const ZERO_DELAY_FALLBACK_MS: u32 = 100;
 const ANIM_MAX_SIDE: u32 = 512;
 // Mirrors the useful part of convert-to-apng's pngquant ladder:
 // try progressively lower quality bands before sacrificing resolution
@@ -60,6 +61,14 @@ struct Frame {
 struct QualityBand {
     min: u8,
     max: u8,
+}
+
+fn gif_delay_ms(delay_cs: u16) -> u32 {
+    if delay_cs == 0 {
+        ZERO_DELAY_FALLBACK_MS
+    } else {
+        ((delay_cs as u32) * 10).max(MIN_FRAME_DURATION_MS)
+    }
 }
 
 fn main() -> ExitCode {
@@ -125,7 +134,7 @@ fn decode_gif(buf: &[u8]) -> Result<Vec<Frame>> {
         let h = frame.height as u32;
         let left = frame.left as u32;
         let top = frame.top as u32;
-        let delay_ms = ((frame.delay as u32) * 10).max(MIN_FRAME_DURATION_MS);
+        let delay_ms = gif_delay_ms(frame.delay);
         raws.push(RawFrame {
             pixels: frame.buffer.to_vec(),
             width: w,
@@ -598,6 +607,18 @@ fn encode_at_quality(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_gif_delay_uses_browser_style_fallback() {
+        assert_eq!(gif_delay_ms(0), 100);
+    }
+
+    #[test]
+    fn explicit_gif_delay_keeps_existing_minimum() {
+        assert_eq!(gif_delay_ms(1), 33);
+        assert_eq!(gif_delay_ms(4), 40);
+        assert_eq!(gif_delay_ms(10), 100);
+    }
 
     #[test]
     fn quality_ladder_matches_pngquant_style_bands() {
