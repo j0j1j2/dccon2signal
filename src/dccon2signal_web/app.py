@@ -23,6 +23,162 @@ class EmojiVote(BaseModel):
     emoji: str
 
 
+EMOJI_CATEGORIES = {
+    "smileys": "표정",
+    "people": "사람",
+    "animals": "동물·자연",
+    "food": "음식",
+    "travel": "여행·장소",
+    "activities": "활동",
+    "objects": "사물",
+    "symbols": "기호·국기",
+}
+
+
+def _emoji_category(value: str, name: str) -> str:
+    label = name.strip(":").lower()
+    codepoints = {ord(char) for char in value}
+    keyword_groups = (
+        ("symbols", ("flag", "button", "arrow", "sign", "symbol", "mark", "keycap", "zodiac")),
+        (
+            "food",
+            (
+                "food",
+                "fruit",
+                "vegetable",
+                "bread",
+                "rice",
+                "cake",
+                "drink",
+                "cup",
+                "bottle",
+                "fork",
+                "spoon",
+                "meat",
+                "fish_cake",
+                "egg",
+                "cheese",
+            ),
+        ),
+        (
+            "animals",
+            (
+                "animal",
+                "dog",
+                "cat",
+                "monkey",
+                "bird",
+                "fish",
+                "bug",
+                "flower",
+                "tree",
+                "plant",
+                "moon",
+                "sun",
+                "weather",
+                "earth",
+                "nature",
+            ),
+        ),
+        (
+            "activities",
+            (
+                "sport",
+                "ball",
+                "game",
+                "medal",
+                "trophy",
+                "musical",
+                "performing",
+                "skier",
+                "skiing",
+                "skate",
+                "swim",
+                "climb",
+                "wrestl",
+                "fenc",
+                "dancer",
+            ),
+        ),
+        (
+            "travel",
+            (
+                "vehicle",
+                "car",
+                "bus",
+                "train",
+                "airplane",
+                "ship",
+                "boat",
+                "building",
+                "house",
+                "city",
+                "map",
+                "mountain",
+                "camping",
+                "beach",
+                "hotel",
+                "place",
+            ),
+        ),
+        (
+            "objects",
+            (
+                "phone",
+                "computer",
+                "book",
+                "tool",
+                "weapon",
+                "money",
+                "mail",
+                "clock",
+                "camera",
+                "light",
+                "lock",
+                "key",
+                "gift",
+                "clothing",
+                "sound",
+                "office",
+            ),
+        ),
+        (
+            "people",
+            (
+                "person",
+                "people",
+                "man",
+                "woman",
+                "boy",
+                "girl",
+                "baby",
+                "adult",
+                "hand",
+                "finger",
+                "body",
+                "hair",
+                "family",
+                "couple",
+                "kiss",
+                "bust",
+                "ear",
+                "eye",
+                "mouth",
+                "leg",
+                "foot",
+            ),
+        ),
+    )
+    if any(0x1F1E6 <= cp <= 0x1F1FF for cp in codepoints):
+        return "symbols"
+    for category, keywords in keyword_groups:
+        if any(keyword in label for keyword in keywords):
+            return category
+    if any(0x1F600 <= cp <= 0x1F64F for cp in codepoints):
+        return "smileys"
+    return "symbols"
+
+
 def _catalog_path() -> Path:
     return Path(os.environ.get("DCCON2SIGNAL_CATALOG_DB", "./out/catalog.sqlite3"))
 
@@ -100,7 +256,11 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
     @app.get("/api/emojis")
     async def emojis() -> list[dict[str, str]]:
         return [
-            {"emoji": value, "name": str(data.get("en", ""))}
+            {
+                "emoji": value,
+                "name": str(data.get("en", "")),
+                "category": _emoji_category(value, str(data.get("en", ""))),
+            }
             for value, data in emoji_lib.EMOJI_DATA.items()
             if data.get("status", 0) <= 2
         ]
@@ -289,23 +449,30 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
             <div class=stickers>{cells}</div>
             <dialog id=emoji-picker><header><b>이모지 선택</b><button type=button onclick="picker.close()" aria-label="닫기">&times;</button></header>
               <input id=emoji-search placeholder="이모지 이름 검색" autocomplete=off>
+              <div class=emoji-categories role=tablist aria-label="이모지 분류">
+                <button type=button data-category=all class=active>전체</button>
+                {"".join(f'<button type=button data-category="{key}">{label}</button>' for key, label in EMOJI_CATEGORIES.items())}
+              </div>
               <div id=emoji-grid aria-live=polite><span class=muted>불러오는 중…</span></div>
               <footer><button type=button class=picker-arrow onclick="changeEmojiPage(-1)" aria-label="이전 페이지">&larr;</button>
                 <span id=emoji-page>1 / 1</span>
                 <button type=button class=picker-arrow onclick="changeEmojiPage(1)" aria-label="다음 페이지">&rarr;</button></footer></dialog>
             <script>const picker=document.getElementById('emoji-picker'),emojiGrid=document.getElementById('emoji-grid'),
             emojiSearch=document.getElementById('emoji-search'),pageLabel=document.getElementById('emoji-page');
-            let targetButton,emojiData=[],filtered=[],emojiPage=0,selectedEmoji='',touchX=0;
+            let targetButton,emojiData=[],filtered=[],emojiPage=0,selectedEmoji='',touchX=0,activeCategory='all';
             const pageSize=()=>matchMedia('(max-width:480px)').matches?35:40;
             async function openPicker(button){{targetButton=button;selectedEmoji=button.dataset.current||'';emojiPage=0;
-            emojiSearch.value='';picker.showModal();emojiSearch.focus();
-            if(!emojiData.length)emojiData=await (await fetch('/api/emojis')).json();filtered=emojiData;renderEmojis();}}
+            emojiSearch.value='';activeCategory='all';document.querySelectorAll('[data-category]').forEach(item=>item.classList.toggle('active',item.dataset.category==='all'));
+            picker.showModal();emojiSearch.focus();if(!emojiData.length)emojiData=await (await fetch('/api/emojis')).json();filterEmojis();}}
             function renderEmojis(){{let size=pageSize(),pages=Math.max(1,Math.ceil(filtered.length/size));emojiPage=Math.max(0,Math.min(emojiPage,pages-1));
             emojiGrid.innerHTML=filtered.slice(emojiPage*size,(emojiPage+1)*size).map(item=>
             `<button type=button title="${{item.name}}" data-emoji="${{item.emoji}}" class="${{item.emoji===selectedEmoji?'selected':''}}">${{item.emoji}}</button>`).join('');
             pageLabel.textContent=`${{emojiPage+1}} / ${{pages}}`;}}
             function changeEmojiPage(step){{emojiPage+=step;renderEmojis();}}
-            emojiSearch.oninput=()=>{{let q=emojiSearch.value.trim().toLowerCase();filtered=q?emojiData.filter(item=>item.name.toLowerCase().includes(q)):emojiData;emojiPage=0;renderEmojis();}};
+            function filterEmojis(){{let q=emojiSearch.value.trim().toLowerCase();filtered=emojiData.filter(item=>
+            (activeCategory==='all'||item.category===activeCategory)&&(!q||item.name.toLowerCase().includes(q)));emojiPage=0;renderEmojis();}}
+            emojiSearch.oninput=filterEmojis;document.querySelector('.emoji-categories').onclick=event=>{{let button=event.target.closest('[data-category]');if(!button)return;
+            activeCategory=button.dataset.category;document.querySelectorAll('[data-category]').forEach(item=>item.classList.toggle('active',item===button));filterEmojis();}};
             emojiGrid.onclick=event=>{{let button=event.target.closest('[data-emoji]');if(!button)return;
             selectedEmoji=button.dataset.emoji;targetButton.textContent=selectedEmoji;targetButton.dataset.current=selectedEmoji;picker.close();}};
             async function submitEmoji(field,submitButton){{let chosen=field.dataset.current;if(!chosen){{openPicker(field);return;}}
@@ -362,6 +529,9 @@ def _page(title: str, body: str) -> str:
     dialog::backdrop{{background:rgba(0,0,0,.68)}}dialog header{{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}}
     dialog header button{{width:38px;height:38px;padding:0;background:transparent;color:var(--fg);font-size:1.6rem;letter-spacing:0}}
     #emoji-search{{width:calc(100% - 32px);margin:14px 16px 10px;padding:11px;background:transparent;border:1px solid var(--line);outline:0}}
+    .emoji-categories{{display:flex;gap:5px;overflow-x:auto;padding:0 16px 10px;scrollbar-width:none}}.emoji-categories::-webkit-scrollbar{{display:none}}
+    .emoji-categories button{{flex:0 0 auto;padding:7px 10px;background:transparent;color:var(--muted);border:1px solid var(--line);font-size:.68rem;letter-spacing:0}}
+    .emoji-categories button.active{{background:var(--fg);color:var(--invert);border-color:var(--fg)}}
     #emoji-search:focus{{border-color:var(--fg)}}#emoji-grid{{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(5,1fr);gap:1px;min-height:250px;padding:0 14px;touch-action:pan-y}}
     #emoji-grid>button{{aspect-ratio:1;padding:0;background:transparent;color:inherit;font-family:"StickerGen Emoji","Noto Color Emoji","Apple Color Emoji","Segoe UI Emoji",sans-serif;font-size:1.65rem;letter-spacing:0;border:1px solid transparent}}
     #emoji-grid>button:hover,#emoji-grid>button:focus-visible,#emoji-grid>button.selected{{opacity:1;border-color:var(--fg);background:var(--soft)}}

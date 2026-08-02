@@ -49,6 +49,10 @@ async def test_emoji_catalog_and_picker(app):
         detail = await client.get("/packs/10")
     assert emojis.status_code == 200
     assert any(item["emoji"] == "👨‍👩‍👧‍👦" for item in emojis.json())
+    assert (
+        next(item for item in emojis.json() if item["emoji"] == "🧑‍🩰")["category"] == "activities"
+    )
+    assert next(item for item in emojis.json() if item["emoji"] == "🐱")["category"] == "animals"
     assert "<dialog id=emoji-picker>" in detail.text
     assert 'data-current="😀"' in detail.text
     assert ">선택</button>" not in detail.text
@@ -62,6 +66,8 @@ async def test_emoji_catalog_and_picker(app):
     assert "submitEmoji(this.previousElementSibling,this)" in detail.text
     assert "ontouchend" in detail.text
     assert 'font-family:"StickerGen Emoji"' in detail.text
+    assert "class=emoji-categories" in detail.text
+    assert "data-category=all" in detail.text
 
 
 @pytest.mark.asyncio
