@@ -37,6 +37,21 @@ async def test_search_vote_and_detail(app):
         detail = await client.get("/api/packs/10")
         assert detail.json()["stickers"][0]["emoji"] == "🐱"
 
+        invalid = await client.put("/api/stickers/100/emoji", json={"emoji": "🐱🐶"})
+        assert invalid.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_emoji_catalog_and_picker(app):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        emojis = await client.get("/api/emojis")
+        detail = await client.get("/packs/10")
+    assert emojis.status_code == 200
+    assert any(item["emoji"] == "👨‍👩‍👧‍👦" for item in emojis.json())
+    assert "<dialog id=emoji-picker>" in detail.text
+    assert "name=emoji" not in detail.text
+
 
 @pytest.mark.asyncio
 async def test_download_appears_in_ranking_and_recent(app):

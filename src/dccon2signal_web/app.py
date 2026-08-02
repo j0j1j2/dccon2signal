@@ -7,6 +7,7 @@ import secrets
 from pathlib import Path
 from urllib.parse import quote, urlencode, urlparse
 
+import emoji as emoji_lib
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
@@ -88,13 +89,21 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
         sticker_idx: str, vote: EmojiVote, request: Request, response: Response
     ) -> dict[str, str]:
         emoji = vote.emoji.strip()
-        if not emoji or len(emoji) > 16 or any(ch.isalnum() for ch in emoji):
-            raise HTTPException(400, "one emoji is required")
+        if not emoji_lib.is_emoji(emoji):
+            raise HTTPException(400, "one valid Unicode emoji is required")
         try:
             store.set_vote(sticker_idx, _voter_key(request, response), emoji)
         except KeyError:
             raise HTTPException(404, "sticker not found") from None
         return {"sticker_idx": sticker_idx, "emoji": emoji}
+
+    @app.get("/api/emojis")
+    async def emojis() -> list[dict[str, str]]:
+        return [
+            {"emoji": value, "name": str(data.get("en", ""))}
+            for value, data in emoji_lib.EMOJI_DATA.items()
+            if data.get("status", 0) <= 2
+        ]
 
     @app.get("/api/rankings")
     async def rankings(days: int = 7) -> list[dict[str, object]]:
@@ -164,6 +173,7 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
         if page < 1:
             raise HTTPException(400, "page must be positive")
         search_page = SearchPage([], page, 0, 0)
+        packs: list[dict[str, object]]
         if q.strip():
             async with httpx.AsyncClient() as client:
                 package_idx = _package_idx_from_query(q)
@@ -263,9 +273,8 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
         cells = "".join(
             f"""<article class=sticker><img src="/media/stickers/{html.escape(str(s["sticker_idx"]))}" loading=lazy>
             <div>#{s["sort"]} {html.escape(str(s["title"]))}</div>
-            <form onsubmit="vote(event,'{html.escape(str(s["sticker_idx"]))}')">
-              <input name=emoji value="{html.escape(str(s.get("emoji") or ""))}" placeholder="😀" maxlength=16>
-              <button>투표</button></form></article>"""
+            <button type=button class=emoji-choice data-sticker="{html.escape(str(s["sticker_idx"]))}"
+              onclick="openPicker(this)">{html.escape(str(s.get("emoji") or "이모지 선택"))}</button></article>"""
             for s in stickers
             if isinstance(s, dict)
         )
@@ -276,9 +285,22 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
             <h1>{html.escape(str(pack["title"]))}</h1>
             <p>BY {html.escape(str(pack["author"]))}</p></header>
             <div class=stickers>{cells}</div>
-            <script>async function vote(e,id){{e.preventDefault();let emoji=e.target.emoji.value;
-            let r=await fetch('/api/stickers/'+id+'/emoji',{{method:'PUT',headers:{{'content-type':'application/json'}},body:JSON.stringify({{emoji}})}});
-            if(!r.ok) alert(await r.text()); else e.target.querySelector('button').textContent='완료';}}</script>""",
+            <dialog id=emoji-picker><header><b>이모지 선택</b><button type=button onclick="picker.close()" aria-label="닫기">&times;</button></header>
+              <input id=emoji-search placeholder="이모지 이름 검색" autocomplete=off>
+              <div id=emoji-grid aria-live=polite><span class=muted>불러오는 중…</span></div></dialog>
+            <script>const picker=document.getElementById('emoji-picker'),emojiGrid=document.getElementById('emoji-grid'),
+            emojiSearch=document.getElementById('emoji-search');let targetButton,emojiData;
+            async function openPicker(button){{targetButton=button;picker.showModal();emojiSearch.focus();
+            if(!emojiData){{emojiData=await (await fetch('/api/emojis')).json();renderEmojis(emojiData);}}}}
+            function renderEmojis(items){{emojiGrid.innerHTML=items.slice(0,800).map(item=>
+            `<button type=button title="${{item.name}}" data-emoji="${{item.emoji}}">${{item.emoji}}</button>`).join('');}}
+            emojiSearch.oninput=()=>{{let q=emojiSearch.value.trim().toLowerCase();
+            renderEmojis(q?emojiData.filter(item=>item.name.toLowerCase().includes(q)):emojiData);}};
+            emojiGrid.onclick=async event=>{{let button=event.target.closest('[data-emoji]');if(!button)return;
+            let chosen=button.dataset.emoji,id=targetButton.dataset.sticker;
+            let response=await fetch('/api/stickers/'+id+'/emoji',{{method:'PUT',headers:{{'content-type':'application/json'}},body:JSON.stringify({{emoji:chosen}})}});
+            if(!response.ok){{alert(await response.text());return;}}targetButton.textContent=chosen;picker.close();}};
+            picker.onclick=event=>{{if(event.target===picker)picker.close();}};</script>""",
         )
 
     return app
@@ -319,9 +341,14 @@ def _page(title: str, body: str) -> str:
     .sticker{{padding:14px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}}
     .sticker>img{{width:100%;aspect-ratio:1;object-fit:contain;background:var(--soft)}}
     .sticker>div{{height:40px;padding-top:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.78rem}}
-    .sticker form{{display:grid;grid-template-columns:1fr auto;border:1px solid var(--line)}}
-    .sticker input{{min-width:0;width:100%;padding:9px;background:transparent;border:0;outline:0}}
-    .sticker form button{{padding:0 12px;font-size:.65rem}}
+    .emoji-choice{{width:100%;min-height:42px;padding:8px 12px;border:1px solid var(--fg);background:transparent;color:var(--fg);font-size:1.25rem;letter-spacing:0}}
+    dialog{{width:min(560px,calc(100vw - 28px));max-height:min(680px,80vh);padding:0;background:var(--bg);color:var(--fg);border:1px solid var(--fg)}}
+    dialog::backdrop{{background:rgba(0,0,0,.68)}}dialog header{{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}}
+    dialog header button{{width:38px;height:38px;padding:0;background:transparent;color:var(--fg);font-size:1.6rem;letter-spacing:0}}
+    #emoji-search{{width:calc(100% - 32px);margin:16px;padding:13px;background:transparent;border:1px solid var(--line);outline:0}}
+    #emoji-search:focus{{border-color:var(--fg)}}#emoji-grid{{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;padding:0 16px 18px;overflow-y:auto}}
+    #emoji-grid>button{{aspect-ratio:1;padding:0;background:transparent;color:inherit;font-size:1.65rem;letter-spacing:0;border:1px solid transparent}}
+    #emoji-grid>button:hover,#emoji-grid>button:focus-visible{{opacity:1;border-color:var(--fg);background:var(--soft)}}
     @media(prefers-color-scheme:dark){{:root{{--bg:#090909;--fg:#f5f5f5;--muted:#999;--line:#303030;--soft:#171717;--invert:#090909}}}}
     @media(max-width:760px){{body{{padding:16px 14px 48px}}.hero{{padding:7vh 0 40px}}.hero h1{{font-size:clamp(2.8rem,14vw,5rem)}}
     .search{{margin:20px 0 36px}}.search input{{padding:16px 14px}}.search button{{padding:0 16px}}
@@ -329,6 +356,7 @@ def _page(title: str, body: str) -> str:
     .pagination{{position:sticky;bottom:0;margin:20px -14px -16px;padding:12px 14px;background:var(--bg);border-top:1px solid var(--fg)}}
     .grid{{grid-template-columns:1fr}}.card:nth-child(n){{grid-template-columns:68px 1fr;min-height:96px;padding:13px 0;border-right:0}}.card img{{width:68px;height:68px}}
     .stickers{{grid-template-columns:repeat(2,minmax(0,1fr))}}.pack-head h1{{font-size:clamp(2.8rem,14vw,5rem)}}}}
+    @media(max-width:480px){{dialog{{width:100%;max-width:none;max-height:78vh;margin:auto 0 0;border-width:1px 0 0}}#emoji-grid{{grid-template-columns:repeat(7,1fr);padding:0 10px 16px}}}}
     </style><body>{body}</body></html>"""
 
 
