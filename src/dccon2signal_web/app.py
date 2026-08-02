@@ -605,7 +605,7 @@ def _page(title: str, body: str) -> str:
     *{{box-sizing:border-box}}html{{font-family:Inter,"Helvetica Neue",Arial,sans-serif}}
     body{{margin:0 auto;max-width:1280px;padding:28px 32px 80px;background:var(--bg);color:var(--fg);font-size:15px;line-height:1.4}}
     a{{color:inherit;text-decoration:none}}h1,h2,p{{margin-top:0}}button,input{{font:inherit;color:inherit}}
-    .hero{{padding:11vh 0 64px;border-bottom:1px solid var(--line)}}
+    .hero{{padding:5vh 0 64px;border-bottom:1px solid var(--line)}}
     .hero h1,.pack-head h1{{max-width:900px;margin:18px 0 24px;font-size:clamp(3rem,8vw,7.5rem);font-weight:600;line-height:.92;letter-spacing:-.065em}}
     .hero h1.wordmark{{max-width:none;margin-top:0;font-size:clamp(2.4rem,9vw,7rem);font-weight:700;line-height:1;letter-spacing:.04em}}
     .hero p,.pack-head p{{color:var(--muted);font-size:1rem}}
@@ -653,7 +653,7 @@ def _page(title: str, body: str) -> str:
     dialog footer button{{min-height:46px;padding:0}}dialog footer .picker-arrow{{background:transparent;color:var(--fg);font-size:1rem}}
     #emoji-page{{display:grid;place-items:center;color:var(--muted);font-size:.75rem;font-variant-numeric:tabular-nums}}
     @media(prefers-color-scheme:dark){{:root{{--bg:#090909;--fg:#f5f5f5;--muted:#999;--line:#303030;--soft:#171717;--invert:#090909}}}}
-    @media(max-width:760px){{body{{padding:16px 14px 48px}}.hero{{padding:7vh 0 40px}}.hero h1.wordmark{{font-size:clamp(2.25rem,10vw,4rem);letter-spacing:.025em}}
+    @media(max-width:760px){{body{{padding:16px 14px 48px}}.hero{{padding:4vh 0 40px}}.hero h1.wordmark{{font-size:clamp(2.25rem,10vw,4rem);letter-spacing:.025em}}
     .search{{margin:20px 0 36px}}.search input{{padding:16px 14px}}.search button{{padding:0 16px}}
     .tabs{{margin:0 -14px;padding:0 14px}}.tabs button{{padding:15px 18px}}.tab-panel{{margin-top:24px}}
     .pagination{{position:sticky;bottom:0;margin:20px -14px -16px;padding:12px 14px;background:var(--bg);border-top:1px solid var(--fg)}}
