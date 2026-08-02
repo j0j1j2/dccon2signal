@@ -51,6 +51,10 @@ async def test_emoji_catalog_and_picker(app):
     assert any(item["emoji"] == "👨‍👩‍👧‍👦" for item in emojis.json())
     assert "<dialog id=emoji-picker>" in detail.text
     assert "name=emoji" not in detail.text
+    assert "changeEmojiPage(-1)" in detail.text
+    assert "changeEmojiPage(1)" in detail.text
+    assert 'onclick="submitEmoji()"' in detail.text
+    assert "ontouchend" in detail.text
 
 
 @pytest.mark.asyncio
