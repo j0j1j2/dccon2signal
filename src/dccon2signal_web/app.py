@@ -141,13 +141,14 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
 
         return _page(
             "디시콘 이모지 광장",
-            f"""<h1>디시콘 이모지 광장</h1>
+            f"""<header class=hero><span class=eyebrow>DCON / EMOJI COMMONS</span>
+            <h1>디시콘을 찾고,<br>이모지를 고르세요.</h1>
+            <p>함께 만드는 Signal 스티커 이모지 데이터베이스.</p></header>
             <form class=search><input name=q value="{html.escape(q)}"
-              placeholder="이름, 제작자 또는 package_idx"><button>검색</button></form>
-            <p class=hint>없는 팩은 <code>/api/packs/&lt;package_idx&gt;/sync</code>로 등록할 수 있습니다.</p>
-            <h2>검색 결과</h2><div class=grid>{cards(packs)}</div>
-            <h2>주간 다운로드 랭킹</h2><div class=grid>{cards(ranking, "downloads")}</div>
-            <h2>최근 다운로드</h2><div class=grid>{cards(recent)}</div>""",
+              placeholder="디시콘 이름, 제작자, package ID" aria-label="디시콘 검색"><button>SEARCH</button></form>
+            <section><div class=section-head><h2>검색 결과</h2><span>SEARCH</span></div><div class=grid>{cards(packs)}</div></section>
+            <section><div class=section-head><h2>주간 랭킹</h2><span>7 DAYS</span></div><div class=grid>{cards(ranking, "downloads")}</div></section>
+            <section><div class=section-head><h2>최근 다운로드</h2><span>RECENT</span></div><div class=grid>{cards(recent)}</div></section>""",
         )
 
     @app.get("/packs/{package_idx}", response_class=HTMLResponse)
@@ -174,8 +175,10 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
         )
         return _page(
             str(pack["title"]),
-            f"""<a href=/>&larr; 검색</a><h1>{html.escape(str(pack["title"]))}</h1>
-            <p>{html.escape(str(pack["author"]))} · package {html.escape(package_idx)}</p>
+            f"""<a class=back href=/>&larr; BACK</a><header class=pack-head>
+            <span class=eyebrow>PACKAGE {html.escape(package_idx)}</span>
+            <h1>{html.escape(str(pack["title"]))}</h1>
+            <p>BY {html.escape(str(pack["author"]))}</p></header>
             <div class=stickers>{cells}</div>
             <script>async function vote(e,id){{e.preventDefault();let emoji=e.target.emoji.value;
             let r=await fetch('/api/stickers/'+id+'/emoji',{{method:'PUT',headers:{{'content-type':'application/json'}},body:JSON.stringify({{emoji}})}});
@@ -188,14 +191,37 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
 def _page(title: str, body: str) -> str:
     return f"""<!doctype html><html lang=ko><meta charset=utf-8><meta name=viewport content="width=device-width">
     <title>{html.escape(title)}</title><style>
-    :root{{--bg:#f6f3ed;--ink:#24211d;--accent:#e45235;--card:#fff}}*{{box-sizing:border-box}}
-    body{{margin:auto;max-width:1080px;padding:32px 20px;background:var(--bg);color:var(--ink);font:16px system-ui}}
-    h1{{font-size:clamp(2rem,6vw,4rem);margin:.3em 0}}h2{{margin-top:2.5rem}}a{{color:inherit;text-decoration:none}}
-    input,button{{font:inherit;padding:.7rem;border:1px solid #bbb;border-radius:9px}}button{{background:var(--accent);color:#fff;border:0;cursor:pointer}}
-    .search{{display:flex;gap:8px}}.search input{{flex:1}}.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}}
-    .card{{display:flex;gap:12px;align-items:center;background:var(--card);padding:10px;border-radius:14px}}.card img{{width:64px;height:64px;object-fit:contain}}
-    small{{display:block;color:#716b63;margin-top:4px}}.muted,.hint{{color:#716b63}}.stickers{{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}}
-    .sticker{{background:#fff;padding:10px;border-radius:14px}}.sticker>img{{width:100%;aspect-ratio:1;object-fit:contain}}.sticker form{{display:flex;gap:5px;margin-top:7px}}.sticker input{{min-width:0;width:100%}}
+    :root{{--bg:#fff;--fg:#090909;--muted:#6b6b6b;--line:#d8d8d8;--soft:#f4f4f4;--invert:#fff;color-scheme:light dark}}
+    *{{box-sizing:border-box}}html{{font-family:Inter,"Helvetica Neue",Arial,sans-serif}}
+    body{{margin:0 auto;max-width:1280px;padding:28px 32px 80px;background:var(--bg);color:var(--fg);font-size:15px;line-height:1.4}}
+    a{{color:inherit;text-decoration:none}}h1,h2,p{{margin-top:0}}button,input{{font:inherit;color:inherit}}
+    .hero{{padding:11vh 0 64px;border-bottom:1px solid var(--line)}}
+    .hero h1,.pack-head h1{{max-width:900px;margin:18px 0 24px;font-size:clamp(3rem,8vw,7.5rem);font-weight:600;line-height:.92;letter-spacing:-.065em}}
+    .hero p,.pack-head p{{color:var(--muted);font-size:1rem}}
+    .eyebrow,.section-head span,.back{{font-size:.72rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase}}
+    .search{{display:grid;grid-template-columns:1fr auto;margin:32px 0 80px;border:1px solid var(--fg)}}
+    .search input{{min-width:0;padding:19px 20px;background:transparent;border:0;outline:0}}
+    .search input:focus{{box-shadow:inset 0 0 0 2px var(--fg)}}
+    button{{padding:0 24px;border:0;background:var(--fg);color:var(--invert);font-size:.75rem;font-weight:700;letter-spacing:.12em;cursor:pointer}}
+    button:hover{{opacity:.72}}section{{margin-top:72px}}
+    .section-head{{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:14px;border-bottom:1px solid var(--fg)}}
+    .section-head h2{{margin:0;font-size:1rem;font-weight:600}}.section-head span,small,.muted{{color:var(--muted)}}
+    .grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
+    .card{{display:grid;grid-template-columns:76px 1fr;gap:18px;align-items:center;min-height:108px;padding:16px 0;border-bottom:1px solid var(--line)}}
+    .card:nth-child(odd){{padding-right:24px;border-right:1px solid var(--line)}}.card:nth-child(even){{padding-left:24px}}
+    .card img{{width:76px;height:76px;object-fit:contain;filter:grayscale(1);transition:filter .18s,transform .18s}}
+    .card:hover img{{filter:none;transform:scale(1.04)}}.card b{{font-size:1rem;font-weight:600}}small{{display:block;margin-top:6px}}
+    .back{{display:inline-block;margin:12px 0 80px}}.pack-head{{padding-bottom:56px;border-bottom:1px solid var(--fg)}}
+    .pack-head h1{{font-size:clamp(3rem,7vw,6rem)}}
+    .stickers{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border-left:1px solid var(--line)}}
+    .sticker{{padding:14px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}}
+    .sticker>img{{width:100%;aspect-ratio:1;object-fit:contain;background:var(--soft)}}
+    .sticker>div{{height:40px;padding-top:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.78rem}}
+    .sticker form{{display:grid;grid-template-columns:1fr auto;border:1px solid var(--line)}}
+    .sticker input{{min-width:0;width:100%;padding:9px;background:transparent;border:0;outline:0}}
+    .sticker form button{{padding:0 12px;font-size:.65rem}}
+    @media(prefers-color-scheme:dark){{:root{{--bg:#090909;--fg:#f5f5f5;--muted:#999;--line:#303030;--soft:#171717;--invert:#090909}}}}
+    @media(max-width:760px){{body{{padding:20px 16px 56px}}.hero{{padding-top:8vh}}.grid{{grid-template-columns:1fr}}.card:nth-child(n){{padding:14px 0;border-right:0}}.stickers{{grid-template-columns:repeat(2,minmax(0,1fr))}}.search{{margin-bottom:56px}}}}
     </style><body>{body}</body></html>"""
 
 
