@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+import math
+import re
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import quote
 
 import httpx
+
+
+@dataclass(frozen=True)
+class SearchPage:
+    items: list[dict[str, object]]
+    page: int
+    total: int
+    page_count: int
 
 
 class _SearchParser(HTMLParser):
@@ -39,11 +50,12 @@ class _SearchParser(HTMLParser):
             self._item = None
 
 
-async def search_dccon(query: str, client: httpx.AsyncClient) -> list[dict[str, object]]:
+async def search_dccon_page(query: str, client: httpx.AsyncClient, page: int = 1) -> SearchPage:
     """Search DCInside's public DCCon catalogue by title."""
     if not query.strip():
-        return []
-    url = f"https://dccon.dcinside.com/new/1/title/{quote(query.strip(), safe='')}"
+        return SearchPage([], 1, 0, 0)
+    page = max(page, 1)
+    url = f"https://dccon.dcinside.com/new/{page}/title/{quote(query.strip(), safe='')}"
     response = await client.get(
         url,
         headers={"User-Agent": "Mozilla/5.0 (dccon2signal)"},
@@ -53,4 +65,10 @@ async def search_dccon(query: str, client: httpx.AsyncClient) -> list[dict[str, 
     response.raise_for_status()
     parser = _SearchParser()
     parser.feed(response.text)
-    return parser.results
+    total_match = re.search(r"검색결과(?:<[^>]+>)*\(([\d,]+)건\)", response.text)
+    total = int(total_match.group(1).replace(",", "")) if total_match else len(parser.results)
+    return SearchPage(parser.results, page, total, math.ceil(total / 15))
+
+
+async def search_dccon(query: str, client: httpx.AsyncClient) -> list[dict[str, object]]:
+    return (await search_dccon_page(query, client)).items

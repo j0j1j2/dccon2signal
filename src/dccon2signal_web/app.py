@@ -5,7 +5,7 @@ import os
 import re
 import secrets
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -14,7 +14,7 @@ from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
 
 from dccon2signal.catalog import Catalog
-from dccon2signal.dccon_search import search_dccon
+from dccon2signal.dccon_search import SearchPage, search_dccon_page
 from dccon2signal.scraper import fetch_pack
 
 
@@ -53,9 +53,17 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
         return store.search_packs(q.strip())
 
     @app.get("/api/dccon-search")
-    async def dccon_search(q: str) -> list[dict[str, object]]:
+    async def dccon_search(q: str, page: int = 1) -> dict[str, object]:
+        if page < 1:
+            raise HTTPException(400, "page must be positive")
         async with httpx.AsyncClient() as client:
-            return await search_dccon(q, client)
+            result = await search_dccon_page(q, client, page)
+        return {
+            "items": result.items,
+            "page": result.page,
+            "total": result.total,
+            "page_count": result.page_count,
+        }
 
     @app.post("/api/packs/{package_idx}/sync")
     async def sync_pack(package_idx: str) -> dict[str, object]:
@@ -152,7 +160,10 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
         return Response(status_code=204)
 
     @app.get("/", response_class=HTMLResponse)
-    async def home(q: str = "") -> str:
+    async def home(q: str = "", page: int = 1) -> str:
+        if page < 1:
+            raise HTTPException(400, "page must be positive")
+        search_page = SearchPage([], page, 0, 0)
         if q.strip():
             async with httpx.AsyncClient() as client:
                 package_idx = _package_idx_from_query(q)
@@ -167,15 +178,35 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
                             "cover_url": fetched.cover_url,
                         }
                     ]
+                    search_page = SearchPage(packs, 1, 1, 1)
                 else:
                     try:
-                        packs = await search_dccon(q, client)
+                        search_page = await search_dccon_page(q, client, page)
+                        packs = search_page.items
                     except httpx.HTTPStatusError:
                         packs = []
         else:
             packs = store.search_packs()
         ranking = store.ranking(7, 10)
         recent = store.recent_downloads(10)
+
+        def pagination() -> str:
+            if search_page.page_count <= 1:
+                return ""
+            links = []
+            if search_page.page > 1:
+                prev = urlencode({"q": q, "page": search_page.page - 1})
+                links.append(f'<a rel=prev href="/?{html.escape(prev)}">&larr; 이전</a>')
+            links.append(
+                f"<span>{search_page.page} / {search_page.page_count}"
+                f" <small>({search_page.total}개)</small></span>"
+            )
+            if search_page.page < search_page.page_count:
+                next_ = urlencode({"q": q, "page": search_page.page + 1})
+                links.append(f'<a rel=next href="/?{html.escape(next_)}">다음 &rarr;</a>')
+            return (
+                '<nav class=pagination aria-label="검색 결과 페이지">' + "".join(links) + "</nav>"
+            )
 
         def cards(items: list[dict[str, object]], metric: str = "") -> str:
             if not items:
@@ -203,7 +234,7 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
               <button type=button role=tab aria-selected=false aria-controls=recent-panel id=recent-tab>최근 다운로드</button>
             </div>
             <section class=tab-panel id=search-panel role=tabpanel aria-labelledby=search-tab>
-              <div class=section-head><h2>검색 결과</h2><span>SEARCH</span></div><div class=grid>{cards(packs)}</div></section>
+              <div class=section-head><h2>검색 결과</h2><span>SEARCH</span></div><div class=grid>{cards(packs)}</div>{pagination()}</section>
             <section class=tab-panel id=ranking-panel role=tabpanel aria-labelledby=ranking-tab hidden>
               <div class=section-head><h2>주간 랭킹</h2><span>7 DAYS</span></div><div class=grid>{cards(ranking, "downloads")}</div></section>
             <section class=tab-panel id=recent-panel role=tabpanel aria-labelledby=recent-tab hidden>
@@ -272,6 +303,9 @@ def _page(title: str, body: str) -> str:
     .tabs::-webkit-scrollbar{{display:none}}.tabs button{{flex:0 0 auto;padding:18px 24px;background:transparent;color:var(--muted);border-bottom:3px solid transparent;letter-spacing:0}}
     .tabs button[aria-selected=true]{{color:var(--fg);border-color:var(--fg)}}.tabs button:focus-visible{{outline:2px solid var(--fg);outline-offset:-4px}}
     .tab-panel{{margin-top:32px}}.tab-panel[hidden]{{display:none}}
+    .pagination{{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px;margin-top:28px;padding-top:20px;border-top:1px solid var(--line)}}
+    .pagination a{{padding:12px 0;font-size:.78rem;font-weight:700;letter-spacing:.08em}}.pagination a:last-child{{text-align:right}}
+    .pagination span{{grid-column:2;text-align:center;font-variant-numeric:tabular-nums}}.pagination small{{display:inline}}
     .section-head{{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:14px;border-bottom:1px solid var(--fg)}}
     .section-head h2{{margin:0;font-size:1rem;font-weight:600}}.section-head span,small,.muted{{color:var(--muted)}}
     .grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -292,6 +326,7 @@ def _page(title: str, body: str) -> str:
     @media(max-width:760px){{body{{padding:16px 14px 48px}}.hero{{padding:7vh 0 40px}}.hero h1{{font-size:clamp(2.8rem,14vw,5rem)}}
     .search{{margin:20px 0 36px}}.search input{{padding:16px 14px}}.search button{{padding:0 16px}}
     .tabs{{margin:0 -14px;padding:0 14px}}.tabs button{{padding:15px 18px}}.tab-panel{{margin-top:24px}}
+    .pagination{{position:sticky;bottom:0;margin:20px -14px -16px;padding:12px 14px;background:var(--bg);border-top:1px solid var(--fg)}}
     .grid{{grid-template-columns:1fr}}.card:nth-child(n){{grid-template-columns:68px 1fr;min-height:96px;padding:13px 0;border-right:0}}.card img{{width:68px;height:68px}}
     .stickers{{grid-template-columns:repeat(2,minmax(0,1fr))}}.pack-head h1{{font-size:clamp(2.8rem,14vw,5rem)}}}}
     </style><body>{body}</body></html>"""
