@@ -131,6 +131,8 @@ async def test_home_uses_stickergen_mobile_tabs(app):
         response = await client.get("/")
     assert response.status_code == 200
     assert "<title>StickerGen</title>" in response.text
+    assert "<h1>StickerGen</h1>" in response.text
+    assert "디시콘을 찾고" not in response.text
     assert "role=tablist" in response.text
     assert response.text.count("role=tabpanel") == 3
     assert "최근 다운로드" in response.text

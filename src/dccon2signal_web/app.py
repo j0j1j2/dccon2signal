@@ -499,7 +499,7 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
         return _page(
             "StickerGen",
             f"""<header class=hero><span class=eyebrow>STICKERGEN</span>
-            <h1>디시콘을 찾고,<br>이모지를 고르세요.</h1>
+            <h1>StickerGen</h1>
             <p>함께 만드는 Signal 스티커 이모지 데이터베이스.</p></header>
             <form class=search><input name=q value="{html.escape(q)}"
               placeholder="디시콘 이름, 제작자, package ID" aria-label="디시콘 검색"><button>SEARCH</button></form>
