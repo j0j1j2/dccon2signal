@@ -38,3 +38,15 @@ async def test_download_appears_in_ranking_and_recent(app):
         assert (await client.post("/api/packs/10/downloads")).status_code == 204
         assert (await client.get("/api/rankings")).json()[0]["downloads"] == 1
         assert (await client.get("/api/recent-downloads")).json()[0]["package_idx"] == "10"
+
+
+@pytest.mark.asyncio
+async def test_home_uses_stickergen_mobile_tabs(app):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/")
+    assert response.status_code == 200
+    assert "<title>StickerGen</title>" in response.text
+    assert "role=tablist" in response.text
+    assert response.text.count("role=tabpanel") == 3
+    assert "최근 다운로드" in response.text

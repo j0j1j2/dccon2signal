@@ -34,7 +34,7 @@ def _voter_key(request: Request, response: Response) -> str:
 
 
 def create_app(catalog: Catalog | None = None) -> FastAPI:
-    app = FastAPI(title="DCCon Emoji Commons", version="0.1.0")
+    app = FastAPI(title="StickerGen", version="0.1.0")
     store = catalog or Catalog(_catalog_path())
     app.state.catalog = store
 
@@ -140,15 +140,29 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
             )
 
         return _page(
-            "디시콘 이모지 광장",
-            f"""<header class=hero><span class=eyebrow>DCON / EMOJI COMMONS</span>
+            "StickerGen",
+            f"""<header class=hero><span class=eyebrow>STICKERGEN</span>
             <h1>디시콘을 찾고,<br>이모지를 고르세요.</h1>
             <p>함께 만드는 Signal 스티커 이모지 데이터베이스.</p></header>
             <form class=search><input name=q value="{html.escape(q)}"
               placeholder="디시콘 이름, 제작자, package ID" aria-label="디시콘 검색"><button>SEARCH</button></form>
-            <section><div class=section-head><h2>검색 결과</h2><span>SEARCH</span></div><div class=grid>{cards(packs)}</div></section>
-            <section><div class=section-head><h2>주간 랭킹</h2><span>7 DAYS</span></div><div class=grid>{cards(ranking, "downloads")}</div></section>
-            <section><div class=section-head><h2>최근 다운로드</h2><span>RECENT</span></div><div class=grid>{cards(recent)}</div></section>""",
+            <div class=tabs role=tablist aria-label="디시콘 목록">
+              <button type=button role=tab aria-selected=true aria-controls=search-panel id=search-tab>검색 결과</button>
+              <button type=button role=tab aria-selected=false aria-controls=ranking-panel id=ranking-tab>주간 랭킹</button>
+              <button type=button role=tab aria-selected=false aria-controls=recent-panel id=recent-tab>최근 다운로드</button>
+            </div>
+            <section class=tab-panel id=search-panel role=tabpanel aria-labelledby=search-tab>
+              <div class=section-head><h2>검색 결과</h2><span>SEARCH</span></div><div class=grid>{cards(packs)}</div></section>
+            <section class=tab-panel id=ranking-panel role=tabpanel aria-labelledby=ranking-tab hidden>
+              <div class=section-head><h2>주간 랭킹</h2><span>7 DAYS</span></div><div class=grid>{cards(ranking, "downloads")}</div></section>
+            <section class=tab-panel id=recent-panel role=tabpanel aria-labelledby=recent-tab hidden>
+              <div class=section-head><h2>최근 다운로드</h2><span>RECENT</span></div><div class=grid>{cards(recent)}</div></section>
+            <script>const tabs=[...document.querySelectorAll('[role="tab"]')];
+            tabs.forEach((tab,index)=>{{tab.onclick=()=>selectTab(tab);tab.onkeydown=e=>{{
+            if(e.key==='ArrowRight'||e.key==='ArrowLeft'){{e.preventDefault();let step=e.key==='ArrowRight'?1:-1;
+            let next=tabs[(index+step+tabs.length)%tabs.length];selectTab(next);next.focus();}}}}}});
+            function selectTab(active){{tabs.forEach(tab=>{{let selected=tab===active;tab.setAttribute('aria-selected',selected);
+            document.getElementById(tab.getAttribute('aria-controls')).hidden=!selected;}});}}</script>""",
         )
 
     @app.get("/packs/{package_idx}", response_class=HTMLResponse)
@@ -203,7 +217,10 @@ def _page(title: str, body: str) -> str:
     .search input{{min-width:0;padding:19px 20px;background:transparent;border:0;outline:0}}
     .search input:focus{{box-shadow:inset 0 0 0 2px var(--fg)}}
     button{{padding:0 24px;border:0;background:var(--fg);color:var(--invert);font-size:.75rem;font-weight:700;letter-spacing:.12em;cursor:pointer}}
-    button:hover{{opacity:.72}}section{{margin-top:72px}}
+    button:hover{{opacity:.72}}.tabs{{display:flex;overflow-x:auto;border-bottom:1px solid var(--fg);scrollbar-width:none}}
+    .tabs::-webkit-scrollbar{{display:none}}.tabs button{{flex:0 0 auto;padding:18px 24px;background:transparent;color:var(--muted);border-bottom:3px solid transparent;letter-spacing:0}}
+    .tabs button[aria-selected=true]{{color:var(--fg);border-color:var(--fg)}}.tabs button:focus-visible{{outline:2px solid var(--fg);outline-offset:-4px}}
+    .tab-panel{{margin-top:32px}}.tab-panel[hidden]{{display:none}}
     .section-head{{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:14px;border-bottom:1px solid var(--fg)}}
     .section-head h2{{margin:0;font-size:1rem;font-weight:600}}.section-head span,small,.muted{{color:var(--muted)}}
     .grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -221,7 +238,11 @@ def _page(title: str, body: str) -> str:
     .sticker input{{min-width:0;width:100%;padding:9px;background:transparent;border:0;outline:0}}
     .sticker form button{{padding:0 12px;font-size:.65rem}}
     @media(prefers-color-scheme:dark){{:root{{--bg:#090909;--fg:#f5f5f5;--muted:#999;--line:#303030;--soft:#171717;--invert:#090909}}}}
-    @media(max-width:760px){{body{{padding:20px 16px 56px}}.hero{{padding-top:8vh}}.grid{{grid-template-columns:1fr}}.card:nth-child(n){{padding:14px 0;border-right:0}}.stickers{{grid-template-columns:repeat(2,minmax(0,1fr))}}.search{{margin-bottom:56px}}}}
+    @media(max-width:760px){{body{{padding:16px 14px 48px}}.hero{{padding:7vh 0 40px}}.hero h1{{font-size:clamp(2.8rem,14vw,5rem)}}
+    .search{{margin:20px 0 36px}}.search input{{padding:16px 14px}}.search button{{padding:0 16px}}
+    .tabs{{margin:0 -14px;padding:0 14px}}.tabs button{{padding:15px 18px}}.tab-panel{{margin-top:24px}}
+    .grid{{grid-template-columns:1fr}}.card:nth-child(n){{grid-template-columns:68px 1fr;min-height:96px;padding:13px 0;border-right:0}}.card img{{width:68px;height:68px}}
+    .stickers{{grid-template-columns:repeat(2,minmax(0,1fr))}}.pack-head h1{{font-size:clamp(2.8rem,14vw,5rem)}}}}
     </style><body>{body}</body></html>"""
 
 
