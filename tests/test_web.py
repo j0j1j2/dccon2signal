@@ -4,6 +4,7 @@ import respx
 
 from dccon2signal.catalog import Catalog
 from dccon2signal.models import DcconPack, DcconSticker
+from dccon2signal.pipeline import ConvertResult
 from dccon2signal_web.app import _package_idx_from_query, create_app
 
 
@@ -68,6 +69,27 @@ async def test_emoji_catalog_and_picker(app):
     assert 'font-family:"StickerGen Emoji"' in detail.text
     assert "class=emoji-categories" in detail.text
     assert "data-category=all" in detail.text
+    assert "id=generate-button" in detail.text
+
+
+@pytest.mark.asyncio
+async def test_generate_pack_returns_install_link(app, monkeypatch):
+    async def fake_convert(package_idx, **_kwargs):
+        return ConvertResult(
+            pack_id="id",
+            pack_key="key",
+            title="pack",
+            author="author",
+            sticker_count=1,
+            install_url="https://signal.art/addstickers/#pack_id=id&pack_key=key",
+        )
+
+    monkeypatch.setattr("dccon2signal_web.app.convert_pack", fake_convert)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/api/packs/10/generate")
+    assert response.status_code == 200
+    assert response.json()["install_url"].startswith("https://signal.art/addstickers/")
 
 
 @pytest.mark.asyncio

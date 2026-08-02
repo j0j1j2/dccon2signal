@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import html
 import os
 import re
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 
 from dccon2signal.catalog import Catalog
 from dccon2signal.dccon_search import SearchPage, search_dccon_page
+from dccon2signal.pipeline import convert_pack
 from dccon2signal.scraper import fetch_pack
 
 
@@ -183,6 +185,18 @@ def _catalog_path() -> Path:
     return Path(os.environ.get("DCCON2SIGNAL_CATALOG_DB", "./out/catalog.sqlite3"))
 
 
+def _auth_path() -> Path:
+    return Path(
+        os.environ.get(
+            "DCCON2SIGNAL_AUTH", str(Path.home() / ".config" / "dccon2signal" / "auth.json")
+        )
+    )
+
+
+def _out_dir() -> Path:
+    return Path(os.environ.get("DCCON2SIGNAL_OUT_DIR", "./out"))
+
+
 def _voter_key(request: Request, response: Response) -> str:
     key = request.cookies.get("dccon_voter")
     if key:
@@ -203,6 +217,7 @@ def _package_idx_from_query(query: str) -> str | None:
 def create_app(catalog: Catalog | None = None) -> FastAPI:
     app = FastAPI(title="StickerGen", version="0.1.0")
     store = catalog or Catalog(_catalog_path())
+    generation_locks: dict[str, asyncio.Lock] = {}
     app.state.catalog = store
 
     @app.get("/api/packs")
@@ -274,6 +289,29 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
     @app.get("/api/recent-downloads")
     async def recent_downloads() -> list[dict[str, object]]:
         return store.recent_downloads()
+
+    @app.post("/api/packs/{package_idx}/generate")
+    async def generate_pack(package_idx: str) -> dict[str, object]:
+        if not package_idx.isdigit():
+            raise HTTPException(400, "package_idx must be numeric")
+        lock = generation_locks.setdefault(package_idx, asyncio.Lock())
+        async with lock:
+            try:
+                result = await convert_pack(
+                    package_idx,
+                    auth_path=_auth_path(),
+                    out_dir=_out_dir(),
+                    catalog_path=store.path,
+                    download_source="web",
+                )
+            except Exception as error:
+                raise HTTPException(500, f"팩 생성 실패: {error}") from error
+        return {
+            "package_idx": package_idx,
+            "title": result.title,
+            "sticker_count": result.sticker_count,
+            "install_url": result.install_url,
+        }
 
     @app.get("/media/stickers/{sticker_idx}")
     async def sticker_image(sticker_idx: str) -> FastAPIResponse:
@@ -445,7 +483,9 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
             f"""<a class=back href=/>&larr; BACK</a><header class=pack-head>
             <span class=eyebrow>PACKAGE {html.escape(package_idx)}</span>
             <h1>{html.escape(str(pack["title"]))}</h1>
-            <p>BY {html.escape(str(pack["author"]))}</p></header>
+            <p>BY {html.escape(str(pack["author"]))}</p>
+            <div class=pack-actions><button type=button id=generate-button onclick="generateSignalPack()">SIGNAL 팩 생성</button>
+              <div id=generate-result aria-live=polite></div></div></header>
             <div class=stickers>{cells}</div>
             <dialog id=emoji-picker><header><b>이모지 선택</b><button type=button onclick="picker.close()" aria-label="닫기">&times;</button></header>
               <input id=emoji-search placeholder="이모지 이름 검색" autocomplete=off>
@@ -480,7 +520,12 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
             if(!response.ok){{alert(await response.text());return;}}submitButton.textContent='완료';setTimeout(()=>submitButton.textContent='투표',1200);}}
             emojiGrid.ontouchstart=event=>{{touchX=event.changedTouches[0].screenX;}};
             emojiGrid.ontouchend=event=>{{let delta=event.changedTouches[0].screenX-touchX;if(Math.abs(delta)>45)changeEmojiPage(delta<0?1:-1);}};
-            picker.onclick=event=>{{if(event.target===picker)picker.close();}};</script>""",
+            picker.onclick=event=>{{if(event.target===picker)picker.close();}};
+            async function generateSignalPack(){{let button=document.getElementById('generate-button'),result=document.getElementById('generate-result');
+            button.disabled=true;button.textContent='생성 중…';result.textContent='이미지 변환과 업로드에는 몇 분이 걸릴 수 있습니다.';
+            try{{let response=await fetch('/api/packs/{html.escape(package_idx)}/generate',{{method:'POST'}}),data=await response.json();
+            if(!response.ok)throw new Error(data.detail||'생성하지 못했습니다.');result.innerHTML=`<a href="${{data.install_url}}" target="_blank" rel="noopener">Signal에 스티커 팩 추가 &rarr;</a>`;
+            button.textContent='링크 생성 완료';}}catch(error){{result.textContent=error.message;button.textContent='다시 시도';button.disabled=false;}}}}</script>""",
         )
 
     return app
@@ -518,6 +563,8 @@ def _page(title: str, body: str) -> str:
     .card:hover img{{transform:scale(1.04)}}.card b{{font-size:1rem;font-weight:600}}small{{display:block;margin-top:6px}}
     .back{{display:inline-block;margin:12px 0 80px}}.pack-head{{padding-bottom:56px;border-bottom:1px solid var(--fg)}}
     .pack-head h1{{font-size:clamp(3rem,7vw,6rem)}}
+    .pack-actions{{display:flex;align-items:center;gap:18px;margin-top:28px}}.pack-actions>button{{min-height:48px}}
+    #generate-result{{font-size:.82rem;color:var(--muted)}}#generate-result a{{color:var(--fg);font-weight:700;text-decoration:underline;text-underline-offset:4px}}
     .stickers{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border-left:1px solid var(--line)}}
     .sticker{{padding:14px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}}
     .sticker>img{{width:100%;aspect-ratio:1;object-fit:contain;background:var(--soft)}}
@@ -545,6 +592,7 @@ def _page(title: str, body: str) -> str:
     .pagination{{position:sticky;bottom:0;margin:20px -14px -16px;padding:12px 14px;background:var(--bg);border-top:1px solid var(--fg)}}
     .grid{{grid-template-columns:1fr}}.card:nth-child(n){{grid-template-columns:68px 1fr;min-height:96px;padding:13px 0;border-right:0}}.card img{{width:68px;height:68px}}
     .stickers{{grid-template-columns:repeat(2,minmax(0,1fr))}}.pack-head h1{{font-size:clamp(2.8rem,14vw,5rem)}}}}
+    @media(max-width:600px){{.pack-actions{{align-items:stretch;flex-direction:column}}.pack-actions>button{{width:100%}}}}
     @media(max-width:480px){{dialog{{width:100%;max-width:none;margin:auto 0 0;border-width:1px 0 0}}#emoji-grid{{grid-template-columns:repeat(7,1fr);grid-template-rows:repeat(5,1fr);min-height:245px;padding:0 10px}}}}
     </style><body>{body}</body></html>"""
 
