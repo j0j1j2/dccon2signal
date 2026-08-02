@@ -112,3 +112,35 @@ async def test_convert_pack_no_upload(tmp_path, fake_pack):
     assert result.pack_id == ""
     assert result.pack_key == ""
     assert result.install_url == ""
+
+
+@pytest.mark.asyncio
+async def test_convert_pack_reuses_link_when_mapping_is_unchanged(tmp_path, fake_pack):
+    async def fake_scrape(_idx, _client):
+        return fake_pack
+
+    async def must_not_download(*_args, **_kwargs):
+        raise AssertionError("cached conversion must not download images")
+
+    from dccon2signal.catalog import Catalog
+
+    db_path = tmp_path / "catalog.sqlite3"
+    catalog = Catalog(db_path)
+    catalog.sync_pack(fake_pack)
+    fingerprint = catalog.mapping_fingerprint(fake_pack, {}, remove_bg=False, static_only=False)
+    catalog.save_link(fake_pack.package_idx, fingerprint, "cached-id", "cached-key")
+
+    with (
+        patch("dccon2signal.pipeline.scraper.fetch_pack", side_effect=fake_scrape),
+        patch("dccon2signal.pipeline.downloader.download_all", side_effect=must_not_download),
+    ):
+        result = await convert_pack(
+            "170660",
+            auth_path=tmp_path / "missing.json",
+            out_dir=tmp_path / "out",
+            catalog_path=db_path,
+        )
+
+    assert result.pack_id == "cached-id"
+    assert result.pack_key == "cached-key"
+    assert catalog.ranking()[0]["downloads"] == 1

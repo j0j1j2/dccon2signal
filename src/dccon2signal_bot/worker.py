@@ -42,6 +42,8 @@ class Worker:
                 job.package_idx,
                 auth_path=self._config.auth_path,
                 out_dir=self._config.out_dir,
+                catalog_path=self._config.catalog_db,
+                download_source="telegram",
                 on_status=reporter.update,
             )
         except (ScraperError, PackBuilderError, AuthError, UploaderError) as e:

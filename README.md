@@ -172,6 +172,35 @@ uv run dccon2signal 170660 12345 99999
 - Signal 스티커 팩 최대 200 개 (디시콘은 보통 20~50 개라 문제 없음)
 - 스티커별 이모지 태그는 기본 `😀` placeholder. `--emoji-map` 또는 업로드 후 Signal Desktop 에서 편집
 
+## 공동 이모지 매핑 웹
+
+웹 서버는 디시콘 검색, 이미지별 이모지 투표, 주간 다운로드 랭킹과 최근 다운로드를
+제공합니다. 변환 CLI와 텔레그램 봇은 같은 카탈로그 DB에서 대표 이모지를 읽습니다.
+
+```bash
+export DCCON2SIGNAL_CATALOG_DB=./out/catalog.sqlite3
+uv run dccon2signal-web
+# http://127.0.0.1:8000
+```
+
+검색 결과의 팩을 열면 디시콘 메타데이터가 자동으로 DB에 등록됩니다. 각 브라우저는
+익명 투표자 쿠키를 하나 가지며 스티커마다 한 표를 행사할 수 있습니다. 가장 많은 표를
+받은 이모지가 변환 시 사용됩니다.
+
+Signal 링크 캐시는 팩 제목·작성자·원본 이미지 경로·변환 옵션·대표 이모지 전체의 지문을
+키로 사용합니다. 이 값이 그대로면 기존 설치 링크를 반환하며, 대표 이모지나 원본 구성이
+바뀌면 새 팩을 업로드합니다. CLI는 기본적으로 `<out-dir>/catalog.sqlite3`를 사용하고,
+`--catalog-db`로 경로를 바꿀 수 있습니다.
+
+주요 API:
+
+- `GET /api/dccon-search?q=검색어` — 디시콘 공개 카탈로그 검색
+- `POST /api/packs/{package_idx}/sync` — 팩 상세 동기화
+- `GET /api/packs/{package_idx}` — 팩과 현재 대표 이모지
+- `PUT /api/stickers/{sticker_idx}/emoji` — `{"emoji":"🐱"}` 투표
+- `GET /api/rankings?days=7` — 자체 집계 다운로드 랭킹
+- `GET /api/recent-downloads` — 최근 다운로드 팩
+
 ## 텔레그램 봇 (선택 사항)
 
 `dccon2signal` 을 텔레그램으로 호출할 수 있는 봇이 같이 들어있어요. 큐가 직렬이라 봇 하나로 여러 사람이 써도 Signal rate limit 에 안 걸립니다.

@@ -31,6 +31,12 @@ DEFAULT_AUTH_PATH = Path.home() / ".config" / "dccon2signal" / "auth.json"
 )
 @click.option("--static-only", is_flag=True, default=False, help="Convert GIFs to static PNG only")
 @click.option(
+    "--catalog-db",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Community mapping/link cache DB (default: OUT_DIR/catalog.sqlite3)",
+)
+@click.option(
     "--emoji-map",
     "emoji_map_path",
     type=click.Path(path_type=Path),
@@ -53,6 +59,7 @@ def main(
     no_upload: bool,
     remove_bg: bool,
     static_only: bool,
+    catalog_db: Path | None,
     emoji_map_path: Path | None,
     auth_path: Path,
     verbose: bool,
@@ -75,6 +82,7 @@ def main(
             static_only=static_only,
             emoji_map=emoji_map,
             auth_path=auth_path,
+            catalog_path=catalog_db or out_dir / "catalog.sqlite3",
         )
     )
 
@@ -90,6 +98,7 @@ async def _run_all(
     static_only: bool,
     emoji_map: dict[str, str] | None,
     auth_path: Path,
+    catalog_path: Path,
 ) -> None:
     for pid in ids:
         await _run_one(
@@ -102,6 +111,7 @@ async def _run_all(
             static_only=static_only,
             emoji_map=emoji_map,
             auth_path=auth_path,
+            catalog_path=catalog_path,
         )
 
 
@@ -116,6 +126,7 @@ async def _run_one(
     static_only: bool,
     emoji_map: dict[str, str] | None,
     auth_path: Path,
+    catalog_path: Path,
 ) -> None:
     from dccon2signal.pipeline import Stage, convert_pack
 
@@ -139,6 +150,8 @@ async def _run_one(
         title_override=title_override,
         author_override=author_override,
         emoji_map=emoji_map,
+        catalog_path=catalog_path,
+        download_source="cli",
         on_status=echo,
     )
 

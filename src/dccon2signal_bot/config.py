@@ -14,6 +14,7 @@ class BotConfig:
     out_dir: Path
     admin_chat_id: int | None
     log_level: str
+    catalog_db: Path | None = None
 
 
 def load() -> BotConfig:
@@ -32,6 +33,7 @@ def load() -> BotConfig:
     admin_raw = os.environ.get("BOT_ADMIN_CHAT_ID")
     admin_chat_id = int(admin_raw) if admin_raw else None
     log_level = os.environ.get("LOG_LEVEL", "INFO")
+    catalog_db = Path(os.environ.get("DCCON2SIGNAL_CATALOG_DB", str(out_dir / "catalog.sqlite3")))
 
     return BotConfig(
         telegram_token=token,
@@ -39,4 +41,5 @@ def load() -> BotConfig:
         out_dir=out_dir,
         admin_chat_id=admin_chat_id,
         log_level=log_level,
+        catalog_db=catalog_db,
     )
