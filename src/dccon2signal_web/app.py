@@ -322,6 +322,7 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
 def _page(title: str, body: str) -> str:
     return f"""<!doctype html><html lang=ko><meta charset=utf-8><meta name=viewport content="width=device-width">
     <title>{html.escape(title)}</title><style>
+    @font-face{{font-family:"StickerGen Emoji";font-style:normal;font-weight:400;font-display:block;src:url("https://fonts.gstatic.com/s/notocoloremoji/v39/Yq6P-KqIXTD0t4D9z1ESnKM3-HpFab4.ttf") format("truetype")}}
     :root{{--bg:#fff;--fg:#090909;--muted:#6b6b6b;--line:#d8d8d8;--soft:#f4f4f4;--invert:#fff;color-scheme:light dark}}
     *{{box-sizing:border-box}}html{{font-family:Inter,"Helvetica Neue",Arial,sans-serif}}
     body{{margin:0 auto;max-width:1280px;padding:28px 32px 80px;background:var(--bg);color:var(--fg);font-size:15px;line-height:1.4}}
@@ -355,14 +356,14 @@ def _page(title: str, body: str) -> str:
     .sticker>img{{width:100%;aspect-ratio:1;object-fit:contain;background:var(--soft)}}
     .sticker-title{{height:40px;padding-top:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.78rem}}
     .emoji-form{{display:grid;grid-template-columns:1fr auto;border:1px solid var(--fg)}}
-    .emoji-choice{{min-width:0;min-height:42px;padding:8px 12px;border:0;background:transparent;color:var(--fg);font-size:1.25rem;letter-spacing:0;text-align:left}}
+    .emoji-choice{{min-width:0;min-height:42px;padding:8px 12px;border:0;background:transparent;color:var(--fg);font-family:"StickerGen Emoji","Noto Color Emoji","Apple Color Emoji","Segoe UI Emoji",sans-serif;font-size:1.25rem;letter-spacing:0;text-align:left}}
     .vote-button{{padding:0 14px;border-left:1px solid var(--fg)}}
     dialog{{width:min(430px,calc(100vw - 28px));padding:0;background:var(--bg);color:var(--fg);border:1px solid var(--fg)}}
     dialog::backdrop{{background:rgba(0,0,0,.68)}}dialog header{{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}}
     dialog header button{{width:38px;height:38px;padding:0;background:transparent;color:var(--fg);font-size:1.6rem;letter-spacing:0}}
     #emoji-search{{width:calc(100% - 32px);margin:14px 16px 10px;padding:11px;background:transparent;border:1px solid var(--line);outline:0}}
     #emoji-search:focus{{border-color:var(--fg)}}#emoji-grid{{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(5,1fr);gap:1px;min-height:250px;padding:0 14px;touch-action:pan-y}}
-    #emoji-grid>button{{aspect-ratio:1;padding:0;background:transparent;color:inherit;font-size:1.65rem;letter-spacing:0;border:1px solid transparent}}
+    #emoji-grid>button{{aspect-ratio:1;padding:0;background:transparent;color:inherit;font-family:"StickerGen Emoji","Noto Color Emoji","Apple Color Emoji","Segoe UI Emoji",sans-serif;font-size:1.65rem;letter-spacing:0;border:1px solid transparent}}
     #emoji-grid>button:hover,#emoji-grid>button:focus-visible,#emoji-grid>button.selected{{opacity:1;border-color:var(--fg);background:var(--soft)}}
     dialog footer{{display:grid;grid-template-columns:48px 1fr 48px;align-items:stretch;margin-top:10px;border-top:1px solid var(--line)}}
     dialog footer button{{min-height:46px;padding:0}}dialog footer .picker-arrow{{background:transparent;color:var(--fg);font-size:1rem}}

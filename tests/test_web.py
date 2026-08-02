@@ -61,6 +61,7 @@ async def test_emoji_catalog_and_picker(app):
     assert "class=vote-button" in detail.text
     assert "submitEmoji(this.previousElementSibling,this)" in detail.text
     assert "ontouchend" in detail.text
+    assert 'font-family:"StickerGen Emoji"' in detail.text
 
 
 @pytest.mark.asyncio
