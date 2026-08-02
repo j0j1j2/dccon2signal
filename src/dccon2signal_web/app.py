@@ -610,7 +610,7 @@ def _page(title: str, body: str) -> str:
     .hero h1.wordmark{{max-width:none;margin-top:0;font-size:clamp(2.4rem,9vw,7rem);font-weight:700;line-height:1;letter-spacing:.04em}}
     .hero p,.pack-head p{{color:var(--muted);font-size:1rem}}
     .eyebrow,.section-head span,.back{{font-size:.72rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase}}
-    .search{{display:grid;grid-template-columns:1fr auto;margin:32px 0 80px;border:1px solid var(--fg)}}
+    .search{{display:grid;grid-template-columns:1fr auto;margin:32px 0 40px;border:1px solid var(--fg)}}
     .search input{{min-width:0;padding:19px 20px;background:transparent;border:0;outline:0}}
     .search input:focus{{box-shadow:inset 0 0 0 2px var(--fg)}}
     button{{padding:0 24px;border:0;background:var(--fg);color:var(--invert);font-size:.75rem;font-weight:700;letter-spacing:.12em;cursor:pointer}}
@@ -654,7 +654,7 @@ def _page(title: str, body: str) -> str:
     #emoji-page{{display:grid;place-items:center;color:var(--muted);font-size:.75rem;font-variant-numeric:tabular-nums}}
     @media(prefers-color-scheme:dark){{:root{{--bg:#090909;--fg:#f5f5f5;--muted:#999;--line:#303030;--soft:#171717;--invert:#090909}}}}
     @media(max-width:760px){{body{{padding:16px 14px 48px}}.hero{{padding:4vh 0 40px}}.hero h1.wordmark{{font-size:clamp(2.25rem,10vw,4rem);letter-spacing:.025em}}
-    .search{{margin:20px 0 36px}}.search input{{padding:16px 14px}}.search button{{padding:0 16px}}
+    .search{{margin:20px 0 24px}}.search input{{padding:16px 14px}}.search button{{padding:0 16px}}
     .tabs{{margin:0 -14px;padding:0 14px}}.tabs button{{padding:15px 18px}}.tab-panel{{margin-top:24px}}
     .pagination{{position:sticky;bottom:0;margin:20px -14px -16px;padding:12px 14px;background:var(--bg);border-top:1px solid var(--fg)}}
     .grid{{grid-template-columns:1fr}}.card:nth-child(n){{grid-template-columns:68px 1fr;min-height:96px;padding:13px 0;border-right:0}}.card img{{width:68px;height:68px}}
