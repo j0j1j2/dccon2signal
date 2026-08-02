@@ -228,9 +228,13 @@ class Catalog:
                 return None
             stickers = db.execute(
                 """SELECT s.*,
-                          (SELECT emoji FROM emoji_votes v WHERE v.sticker_idx=s.sticker_idx
-                           GROUP BY emoji ORDER BY COUNT(*) DESC, MAX(updated_at) DESC LIMIT 1)
-                          AS emoji
+                          COALESCE(
+                            (SELECT emoji FROM emoji_votes v
+                             WHERE v.sticker_idx=s.sticker_idx
+                             GROUP BY emoji
+                             ORDER BY COUNT(*) DESC, MAX(updated_at) DESC LIMIT 1),
+                            '😀'
+                          ) AS emoji
                    FROM stickers s WHERE package_idx=? ORDER BY sort""",
                 (package_idx,),
             ).fetchall()

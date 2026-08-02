@@ -50,3 +50,4 @@ def test_search_and_pack_detail(tmp_path):
     detail = catalog.get_pack("10")
     assert detail is not None
     assert detail["stickers"][0]["sticker_idx"] == "100"
+    assert detail["stickers"][0]["emoji"] == "😀"

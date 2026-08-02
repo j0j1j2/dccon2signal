@@ -50,6 +50,8 @@ async def test_emoji_catalog_and_picker(app):
     assert emojis.status_code == 200
     assert any(item["emoji"] == "👨‍👩‍👧‍👦" for item in emojis.json())
     assert "<dialog id=emoji-picker>" in detail.text
+    assert 'data-current="😀"' in detail.text
+    assert ">선택</button>" not in detail.text
     assert "name=emoji" not in detail.text
     assert "changeEmojiPage(-1)" in detail.text
     assert "changeEmojiPage(1)" in detail.text

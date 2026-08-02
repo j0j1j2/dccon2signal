@@ -274,8 +274,8 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
             f"""<article class=sticker><img src="/media/stickers/{html.escape(str(s["sticker_idx"]))}" loading=lazy>
             <div>#{s["sort"]} {html.escape(str(s["title"]))}</div>
             <div class=emoji-form><button type=button class=emoji-choice data-sticker="{html.escape(str(s["sticker_idx"]))}"
-              data-current="{html.escape(str(s.get("emoji") or ""))}"
-              onclick="openPicker(this)">{html.escape(str(s.get("emoji") or "선택"))}</button>
+              data-current="{html.escape(str(s.get("emoji") or "😀"))}"
+              onclick="openPicker(this)">{html.escape(str(s.get("emoji") or "😀"))}</button>
               <button type=button class=vote-button onclick="submitEmoji(this.previousElementSibling,this)">투표</button></div></article>"""
             for s in stickers
             if isinstance(s, dict)
