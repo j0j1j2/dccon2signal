@@ -277,8 +277,8 @@ def _page(title: str, body: str) -> str:
     .grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
     .card{{display:grid;grid-template-columns:76px 1fr;gap:18px;align-items:center;min-height:108px;padding:16px 0;border-bottom:1px solid var(--line)}}
     .card:nth-child(odd){{padding-right:24px;border-right:1px solid var(--line)}}.card:nth-child(even){{padding-left:24px}}
-    .card img{{width:76px;height:76px;object-fit:contain;filter:grayscale(1);transition:filter .18s,transform .18s}}
-    .card:hover img{{filter:none;transform:scale(1.04)}}.card b{{font-size:1rem;font-weight:600}}small{{display:block;margin-top:6px}}
+    .card img{{width:76px;height:76px;object-fit:contain;transition:transform .18s}}
+    .card:hover img{{transform:scale(1.04)}}.card b{{font-size:1rem;font-weight:600}}small{{display:block;margin-top:6px}}
     .back{{display:inline-block;margin:12px 0 80px}}.pack-head{{padding-bottom:56px;border-bottom:1px solid var(--fg)}}
     .pack-head h1{{font-size:clamp(3rem,7vw,6rem)}}
     .stickers{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border-left:1px solid var(--line)}}
