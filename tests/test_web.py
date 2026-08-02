@@ -1,3 +1,6 @@
+import asyncio
+import time
+
 import httpx
 import pytest
 import respx
@@ -93,6 +96,26 @@ async def test_generate_pack_returns_install_link(app, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generate_pack_does_not_block_other_web_requests(app, monkeypatch):
+    async def slow_convert(package_idx, **_kwargs):
+        time.sleep(0.25)
+        return ConvertResult("id", "key", "pack", "author", 1, "https://signal.art/link")
+
+    monkeypatch.setattr("dccon2signal_web.app.convert_pack", slow_convert)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        started = time.monotonic()
+        generation = asyncio.create_task(client.post("/api/packs/10/generate"))
+        await asyncio.sleep(0.02)
+        detail = await client.get("/api/packs/10")
+        elapsed = time.monotonic() - started
+        generated = await generation
+    assert detail.status_code == 200
+    assert elapsed < 0.15
+    assert generated.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_download_appears_in_ranking_and_recent(app):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -127,6 +150,14 @@ async def test_cover_proxy_supplies_dcinside_referer(app):
     assert response.status_code == 200
     assert response.content == b"jpeg"
     assert route.calls[0].request.headers["referer"] == "https://dccon.dcinside.com/"
+    etag = response.headers["etag"]
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        cached = await client.get(
+            "/media/dccon-cover", params={"url": image_url}, headers={"If-None-Match": etag}
+        )
+    assert cached.status_code == 304
+    assert len(route.calls) == 1
 
 
 @pytest.mark.asyncio

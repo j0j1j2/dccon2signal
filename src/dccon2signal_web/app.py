@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
 import os
 import re
 import secrets
+import time
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote, urlencode, urlparse
 
 import emoji as emoji_lib
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
 
@@ -35,6 +38,9 @@ EMOJI_CATEGORIES = {
     "objects": "사물",
     "symbols": "기호·국기",
 }
+SEARCH_CACHE_TTL_SECONDS = 300
+MEDIA_CACHE_MAX_BYTES = 256 * 1024 * 1024
+MEDIA_CACHE_TARGET_BYTES = 224 * 1024 * 1024
 
 
 def _emoji_category(value: str, name: str) -> str:
@@ -197,6 +203,42 @@ def _out_dir() -> Path:
     return Path(os.environ.get("DCCON2SIGNAL_OUT_DIR", "./out"))
 
 
+@lru_cache(maxsize=1)
+def _emoji_catalog() -> list[dict[str, str]]:
+    return [
+        {
+            "emoji": value,
+            "name": str(data.get("en", "")),
+            "category": _emoji_category(value, str(data.get("en", ""))),
+        }
+        for value, data in emoji_lib.EMOJI_DATA.items()
+        if data.get("status", 0) <= 2
+    ]
+
+
+def _media_type(data: bytes, fallback: str) -> str:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    return fallback
+
+
+def _prune_media_cache(cache_dir: Path) -> None:
+    files = [path for path in cache_dir.iterdir() if path.is_file() and path.suffix == ".bin"]
+    total = sum(path.stat().st_size for path in files)
+    if total <= MEDIA_CACHE_MAX_BYTES:
+        return
+    for path in sorted(files, key=lambda item: item.stat().st_mtime):
+        size = path.stat().st_size
+        path.unlink(missing_ok=True)
+        total -= size
+        if total <= MEDIA_CACHE_TARGET_BYTES:
+            break
+
+
 def _voter_key(request: Request, response: Response) -> str:
     key = request.cookies.get("dccon_voter")
     if key:
@@ -218,7 +260,51 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
     app = FastAPI(title="StickerGen", version="0.1.0")
     store = catalog or Catalog(_catalog_path())
     generation_locks: dict[str, asyncio.Lock] = {}
+    media_locks: dict[str, asyncio.Lock] = {}
+    search_cache: dict[tuple[str, int], tuple[float, SearchPage]] = {}
+    media_cache_dir = store.path.parent / "media-cache"
+    media_cache_dir.mkdir(parents=True, exist_ok=True)
     app.state.catalog = store
+
+    async def cached_search(query: str, page: int) -> SearchPage:
+        key = (query.strip(), page)
+        cached = search_cache.get(key)
+        now = time.monotonic()
+        if cached is not None and now - cached[0] < SEARCH_CACHE_TTL_SECONDS:
+            return cached[1]
+        async with httpx.AsyncClient() as client:
+            result = await search_dccon_page(query, client, page)
+        search_cache[key] = (now, result)
+        if len(search_cache) > 256:
+            oldest = min(search_cache, key=lambda item: search_cache[item][0])
+            search_cache.pop(oldest, None)
+        return result
+
+    async def cached_image(url: str, fallback_type: str) -> tuple[bytes, str, str]:
+        digest = hashlib.sha256(url.encode()).hexdigest()
+        path = media_cache_dir / f"{digest}.bin"
+        lock = media_locks.setdefault(digest, asyncio.Lock())
+        async with lock:
+            if path.exists():
+                data = path.read_bytes()
+                path.touch()
+                return data, _media_type(data, fallback_type), digest
+            async with httpx.AsyncClient() as client:
+                image = await client.get(
+                    url,
+                    headers={
+                        "Referer": "https://dccon.dcinside.com/",
+                        "User-Agent": "Mozilla/5.0 (dccon2signal)",
+                    },
+                    timeout=15.0,
+                )
+            image.raise_for_status()
+            data = image.content
+            temporary = path.with_suffix(f".{secrets.token_hex(6)}.tmp")
+            temporary.write_bytes(data)
+            temporary.replace(path)
+            _prune_media_cache(media_cache_dir)
+            return data, image.headers.get("content-type", fallback_type), digest
 
     @app.get("/api/packs")
     async def search_packs(q: str = "") -> list[dict[str, object]]:
@@ -228,8 +314,7 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
     async def dccon_search(q: str, page: int = 1) -> dict[str, object]:
         if page < 1:
             raise HTTPException(400, "page must be positive")
-        async with httpx.AsyncClient() as client:
-            result = await search_dccon_page(q, client, page)
+        result = await cached_search(q, page)
         return {
             "items": result.items,
             "page": result.page,
@@ -269,16 +354,8 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
         return {"sticker_idx": sticker_idx, "emoji": emoji}
 
     @app.get("/api/emojis")
-    async def emojis() -> list[dict[str, str]]:
-        return [
-            {
-                "emoji": value,
-                "name": str(data.get("en", "")),
-                "category": _emoji_category(value, str(data.get("en", ""))),
-            }
-            for value, data in emoji_lib.EMOJI_DATA.items()
-            if data.get("status", 0) <= 2
-        ]
+    async def emojis() -> JSONResponse:
+        return JSONResponse(_emoji_catalog(), headers={"Cache-Control": "public, max-age=86400"})
 
     @app.get("/api/rankings")
     async def rankings(days: int = 7) -> list[dict[str, object]]:
@@ -297,12 +374,16 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
         lock = generation_locks.setdefault(package_idx, asyncio.Lock())
         async with lock:
             try:
-                result = await convert_pack(
-                    package_idx,
-                    auth_path=_auth_path(),
-                    out_dir=_out_dir(),
-                    catalog_path=store.path,
-                    download_source="web",
+                result = await asyncio.to_thread(
+                    lambda: asyncio.run(
+                        convert_pack(
+                            package_idx,
+                            auth_path=_auth_path(),
+                            out_dir=_out_dir(),
+                            catalog_path=store.path,
+                            download_source="web",
+                        )
+                    )
                 )
             except Exception as error:
                 raise HTTPException(500, f"팩 생성 실패: {error}") from error
@@ -314,28 +395,21 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
         }
 
     @app.get("/media/stickers/{sticker_idx}")
-    async def sticker_image(sticker_idx: str) -> FastAPIResponse:
+    async def sticker_image(sticker_idx: str, request: Request) -> FastAPIResponse:
         image_url = store.sticker_image_url(sticker_idx)
         if image_url is None:
             raise HTTPException(404, "sticker not found")
-        async with httpx.AsyncClient() as client:
-            image = await client.get(
-                image_url,
-                headers={
-                    "Referer": "https://dccon.dcinside.com/",
-                    "User-Agent": "Mozilla/5.0 (dccon2signal)",
-                },
-                timeout=15.0,
-            )
-        image.raise_for_status()
+        data, media_type, etag = await cached_image(image_url, "image/png")
+        if request.headers.get("if-none-match") == etag:
+            return FastAPIResponse(status_code=304, headers={"ETag": etag})
         return FastAPIResponse(
-            content=image.content,
-            media_type=image.headers.get("content-type", "image/png"),
-            headers={"Cache-Control": "public, max-age=86400"},
+            content=data,
+            media_type=media_type,
+            headers={"Cache-Control": "public, max-age=86400, immutable", "ETag": etag},
         )
 
     @app.get("/media/dccon-cover")
-    async def dccon_cover(url: str) -> FastAPIResponse:
+    async def dccon_cover(url: str, request: Request) -> FastAPIResponse:
         parsed = urlparse(url)
         if (
             parsed.scheme != "https"
@@ -343,20 +417,13 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
             or parsed.path != "/dccon.php"
         ):
             raise HTTPException(400, "unsupported image URL")
-        async with httpx.AsyncClient() as client:
-            image = await client.get(
-                url,
-                headers={
-                    "Referer": "https://dccon.dcinside.com/",
-                    "User-Agent": "Mozilla/5.0 (dccon2signal)",
-                },
-                timeout=15.0,
-            )
-        image.raise_for_status()
+        data, media_type, etag = await cached_image(url, "image/jpeg")
+        if request.headers.get("if-none-match") == etag:
+            return FastAPIResponse(status_code=304, headers={"ETag": etag})
         return FastAPIResponse(
-            content=image.content,
-            media_type=image.headers.get("content-type", "image/jpeg"),
-            headers={"Cache-Control": "public, max-age=86400"},
+            content=data,
+            media_type=media_type,
+            headers={"Cache-Control": "public, max-age=86400, immutable", "ETag": etag},
         )
 
     @app.post("/api/packs/{package_idx}/downloads", status_code=204)
@@ -389,7 +456,7 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
                     search_page = SearchPage(packs, 1, 1, 1)
                 else:
                     try:
-                        search_page = await search_dccon_page(q, client, page)
+                        search_page = await cached_search(q, page)
                         packs = search_page.items
                     except httpx.HTTPStatusError:
                         packs = []
