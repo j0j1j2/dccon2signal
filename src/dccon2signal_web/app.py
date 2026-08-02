@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import html
 import os
+import re
 import secrets
 from pathlib import Path
+from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -31,6 +33,14 @@ def _voter_key(request: Request, response: Response) -> str:
     key = secrets.token_urlsafe(24)
     response.set_cookie("dccon_voter", key, max_age=31536000, httponly=True, samesite="lax")
     return key
+
+
+def _package_idx_from_query(query: str) -> str | None:
+    value = query.strip()
+    if value.isdigit():
+        return value
+    match = re.search(r"[#/](\d+)/?$", value)
+    return match.group(1) if match else None
 
 
 def create_app(catalog: Catalog | None = None) -> FastAPI:
@@ -109,6 +119,31 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
             headers={"Cache-Control": "public, max-age=86400"},
         )
 
+    @app.get("/media/dccon-cover")
+    async def dccon_cover(url: str) -> FastAPIResponse:
+        parsed = urlparse(url)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "dcimg5.dcinside.com"
+            or parsed.path != "/dccon.php"
+        ):
+            raise HTTPException(400, "unsupported image URL")
+        async with httpx.AsyncClient() as client:
+            image = await client.get(
+                url,
+                headers={
+                    "Referer": "https://dccon.dcinside.com/",
+                    "User-Agent": "Mozilla/5.0 (dccon2signal)",
+                },
+                timeout=15.0,
+            )
+        image.raise_for_status()
+        return FastAPIResponse(
+            content=image.content,
+            media_type=image.headers.get("content-type", "image/jpeg"),
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
     @app.post("/api/packs/{package_idx}/downloads", status_code=204)
     async def record_download(package_idx: str) -> Response:
         if store.get_pack(package_idx) is None:
@@ -120,7 +155,23 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
     async def home(q: str = "") -> str:
         if q.strip():
             async with httpx.AsyncClient() as client:
-                packs = await search_dccon(q, client)
+                package_idx = _package_idx_from_query(q)
+                if package_idx:
+                    fetched = await fetch_pack(package_idx, client)
+                    store.sync_pack(fetched)
+                    packs = [
+                        {
+                            "package_idx": fetched.package_idx,
+                            "title": fetched.title,
+                            "author": fetched.author,
+                            "cover_url": fetched.cover_url,
+                        }
+                    ]
+                else:
+                    try:
+                        packs = await search_dccon(q, client)
+                    except httpx.HTTPStatusError:
+                        packs = []
         else:
             packs = store.search_packs()
         ranking = store.ranking(7, 10)
@@ -131,7 +182,7 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
                 return "<p class=muted>아직 데이터가 없습니다.</p>"
             return "".join(
                 f'<a class=card href="/packs/{html.escape(str(x["package_idx"]))}">'
-                f'<img src="{html.escape(str(x["cover_url"]))}" loading=lazy>'
+                f'<img src="/media/dccon-cover?url={quote(str(x["cover_url"]), safe="")}" loading=lazy>'
                 f"<span><b>{html.escape(str(x['title']))}</b><small>"
                 f"{html.escape(str(x['author']))}"
                 + (f" · {x.get(metric, 0)}회" if metric else "")

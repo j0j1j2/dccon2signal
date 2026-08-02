@@ -1,9 +1,10 @@
 import httpx
 import pytest
+import respx
 
 from dccon2signal.catalog import Catalog
 from dccon2signal.models import DcconPack, DcconSticker
-from dccon2signal_web.app import create_app
+from dccon2signal_web.app import _package_idx_from_query, create_app
 
 
 @pytest.fixture
@@ -13,6 +14,12 @@ def app(tmp_path):
     pack.stickers = [DcconSticker("100", 1, "one", "png", "image")]
     catalog.sync_pack(pack)
     return create_app(catalog)
+
+
+def test_package_idx_query_accepts_id_and_dccon_url():
+    assert _package_idx_from_query("171367") == "171367"
+    assert _package_idx_from_query("https://dccon.dcinside.com/#171367") == "171367"
+    assert _package_idx_from_query("고양이") is None
 
 
 @pytest.mark.asyncio
@@ -50,3 +57,29 @@ async def test_home_uses_stickergen_mobile_tabs(app):
     assert "role=tablist" in response.text
     assert response.text.count("role=tabpanel") == 3
     assert "최근 다운로드" in response.text
+    assert "/media/dccon-cover?url=" in response.text
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_cover_proxy_supplies_dcinside_referer(app):
+    image_url = "https://dcimg5.dcinside.com/dccon.php?no=abc"
+    route = respx.get(image_url).mock(
+        return_value=httpx.Response(200, content=b"jpeg", headers={"content-type": "image/jpeg"})
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/media/dccon-cover", params={"url": image_url})
+    assert response.status_code == 200
+    assert response.content == b"jpeg"
+    assert route.calls[0].request.headers["referer"] == "https://dccon.dcinside.com/"
+
+
+@pytest.mark.asyncio
+async def test_cover_proxy_rejects_other_hosts(app):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/media/dccon-cover", params={"url": "https://example.com/image.png"}
+        )
+    assert response.status_code == 400
