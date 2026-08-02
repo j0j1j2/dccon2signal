@@ -273,9 +273,10 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
         cells = "".join(
             f"""<article class=sticker><img src="/media/stickers/{html.escape(str(s["sticker_idx"]))}" loading=lazy>
             <div>#{s["sort"]} {html.escape(str(s["title"]))}</div>
-            <button type=button class=emoji-choice data-sticker="{html.escape(str(s["sticker_idx"]))}"
+            <div class=emoji-form><button type=button class=emoji-choice data-sticker="{html.escape(str(s["sticker_idx"]))}"
               data-current="{html.escape(str(s.get("emoji") or ""))}"
-              onclick="openPicker(this)">{html.escape(str(s.get("emoji") or "이모지 선택"))}</button></article>"""
+              onclick="openPicker(this)">{html.escape(str(s.get("emoji") or "선택"))}</button>
+              <button type=button class=vote-button onclick="submitEmoji(this.previousElementSibling,this)">투표</button></div></article>"""
             for s in stickers
             if isinstance(s, dict)
         )
@@ -291,14 +292,13 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
               <div id=emoji-grid aria-live=polite><span class=muted>불러오는 중…</span></div>
               <footer><button type=button class=picker-arrow onclick="changeEmojiPage(-1)" aria-label="이전 페이지">&larr;</button>
                 <span id=emoji-page>1 / 1</span>
-                <button type=button class=picker-arrow onclick="changeEmojiPage(1)" aria-label="다음 페이지">&rarr;</button>
-                <button type=button id=emoji-vote onclick="submitEmoji()" disabled>투표</button></footer></dialog>
+                <button type=button class=picker-arrow onclick="changeEmojiPage(1)" aria-label="다음 페이지">&rarr;</button></footer></dialog>
             <script>const picker=document.getElementById('emoji-picker'),emojiGrid=document.getElementById('emoji-grid'),
-            emojiSearch=document.getElementById('emoji-search'),pageLabel=document.getElementById('emoji-page'),
-            voteButton=document.getElementById('emoji-vote');let targetButton,emojiData=[],filtered=[],emojiPage=0,selectedEmoji='',touchX=0;
+            emojiSearch=document.getElementById('emoji-search'),pageLabel=document.getElementById('emoji-page');
+            let targetButton,emojiData=[],filtered=[],emojiPage=0,selectedEmoji='',touchX=0;
             const pageSize=()=>matchMedia('(max-width:480px)').matches?35:40;
             async function openPicker(button){{targetButton=button;selectedEmoji=button.dataset.current||'';emojiPage=0;
-            emojiSearch.value='';voteButton.disabled=!selectedEmoji;picker.showModal();emojiSearch.focus();
+            emojiSearch.value='';picker.showModal();emojiSearch.focus();
             if(!emojiData.length)emojiData=await (await fetch('/api/emojis')).json();filtered=emojiData;renderEmojis();}}
             function renderEmojis(){{let size=pageSize(),pages=Math.max(1,Math.ceil(filtered.length/size));emojiPage=Math.max(0,Math.min(emojiPage,pages-1));
             emojiGrid.innerHTML=filtered.slice(emojiPage*size,(emojiPage+1)*size).map(item=>
@@ -306,11 +306,11 @@ def create_app(catalog: Catalog | None = None) -> FastAPI:
             pageLabel.textContent=`${{emojiPage+1}} / ${{pages}}`;}}
             function changeEmojiPage(step){{emojiPage+=step;renderEmojis();}}
             emojiSearch.oninput=()=>{{let q=emojiSearch.value.trim().toLowerCase();filtered=q?emojiData.filter(item=>item.name.toLowerCase().includes(q)):emojiData;emojiPage=0;renderEmojis();}};
-            emojiGrid.onclick=event=>{{let button=event.target.closest('[data-emoji]');if(!button)return;selectedEmoji=button.dataset.emoji;
-            voteButton.disabled=false;emojiGrid.querySelectorAll('.selected').forEach(item=>item.classList.remove('selected'));button.classList.add('selected');}};
-            async function submitEmoji(){{if(!selectedEmoji)return;let id=targetButton.dataset.sticker;
-            let response=await fetch('/api/stickers/'+id+'/emoji',{{method:'PUT',headers:{{'content-type':'application/json'}},body:JSON.stringify({{emoji:selectedEmoji}})}});
-            if(!response.ok){{alert(await response.text());return;}}targetButton.textContent=selectedEmoji;targetButton.dataset.current=selectedEmoji;picker.close();}}
+            emojiGrid.onclick=event=>{{let button=event.target.closest('[data-emoji]');if(!button)return;
+            selectedEmoji=button.dataset.emoji;targetButton.textContent=selectedEmoji;targetButton.dataset.current=selectedEmoji;picker.close();}};
+            async function submitEmoji(field,submitButton){{let chosen=field.dataset.current;if(!chosen){{openPicker(field);return;}}
+            let response=await fetch('/api/stickers/'+field.dataset.sticker+'/emoji',{{method:'PUT',headers:{{'content-type':'application/json'}},body:JSON.stringify({{emoji:chosen}})}});
+            if(!response.ok){{alert(await response.text());return;}}submitButton.textContent='완료';setTimeout(()=>submitButton.textContent='투표',1200);}}
             emojiGrid.ontouchstart=event=>{{touchX=event.changedTouches[0].screenX;}};
             emojiGrid.ontouchend=event=>{{let delta=event.changedTouches[0].screenX-touchX;if(Math.abs(delta)>45)changeEmojiPage(delta<0?1:-1);}};
             picker.onclick=event=>{{if(event.target===picker)picker.close();}};</script>""",
@@ -354,7 +354,9 @@ def _page(title: str, body: str) -> str:
     .sticker{{padding:14px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}}
     .sticker>img{{width:100%;aspect-ratio:1;object-fit:contain;background:var(--soft)}}
     .sticker>div{{height:40px;padding-top:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.78rem}}
-    .emoji-choice{{width:100%;min-height:42px;padding:8px 12px;border:1px solid var(--fg);background:transparent;color:var(--fg);font-size:1.25rem;letter-spacing:0}}
+    .emoji-form{{display:grid;grid-template-columns:1fr auto;border:1px solid var(--fg)}}
+    .emoji-choice{{min-width:0;min-height:42px;padding:8px 12px;border:0;background:transparent;color:var(--fg);font-size:1.25rem;letter-spacing:0;text-align:left}}
+    .vote-button{{padding:0 14px;border-left:1px solid var(--fg)}}
     dialog{{width:min(430px,calc(100vw - 28px));padding:0;background:var(--bg);color:var(--fg);border:1px solid var(--fg)}}
     dialog::backdrop{{background:rgba(0,0,0,.68)}}dialog header{{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}}
     dialog header button{{width:38px;height:38px;padding:0;background:transparent;color:var(--fg);font-size:1.6rem;letter-spacing:0}}
@@ -362,9 +364,9 @@ def _page(title: str, body: str) -> str:
     #emoji-search:focus{{border-color:var(--fg)}}#emoji-grid{{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(5,1fr);gap:1px;min-height:250px;padding:0 14px;touch-action:pan-y}}
     #emoji-grid>button{{aspect-ratio:1;padding:0;background:transparent;color:inherit;font-size:1.65rem;letter-spacing:0;border:1px solid transparent}}
     #emoji-grid>button:hover,#emoji-grid>button:focus-visible,#emoji-grid>button.selected{{opacity:1;border-color:var(--fg);background:var(--soft)}}
-    dialog footer{{display:grid;grid-template-columns:48px 1fr 48px 90px;align-items:stretch;margin-top:10px;border-top:1px solid var(--line)}}
+    dialog footer{{display:grid;grid-template-columns:48px 1fr 48px;align-items:stretch;margin-top:10px;border-top:1px solid var(--line)}}
     dialog footer button{{min-height:46px;padding:0}}dialog footer .picker-arrow{{background:transparent;color:var(--fg);font-size:1rem}}
-    #emoji-page{{display:grid;place-items:center;color:var(--muted);font-size:.75rem;font-variant-numeric:tabular-nums}}#emoji-vote:disabled{{opacity:.25;cursor:not-allowed}}
+    #emoji-page{{display:grid;place-items:center;color:var(--muted);font-size:.75rem;font-variant-numeric:tabular-nums}}
     @media(prefers-color-scheme:dark){{:root{{--bg:#090909;--fg:#f5f5f5;--muted:#999;--line:#303030;--soft:#171717;--invert:#090909}}}}
     @media(max-width:760px){{body{{padding:16px 14px 48px}}.hero{{padding:7vh 0 40px}}.hero h1{{font-size:clamp(2.8rem,14vw,5rem)}}
     .search{{margin:20px 0 36px}}.search input{{padding:16px 14px}}.search button{{padding:0 16px}}
